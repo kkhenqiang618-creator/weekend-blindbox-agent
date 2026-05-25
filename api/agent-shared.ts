@@ -1,5 +1,5 @@
-import { generatePlan, executePlan, handleReplan } from "../new-agent-a-module/src/agent/orchestrator.ts";
-import { pois } from "../new-agent-a-module/src/data/pois.ts";
+import { generatePlan, executePlan, handleReplan } from "../new-agent-a-module/src/agent/orchestrator";
+import { pois } from "../new-agent-a-module/src/data/pois";
 
 type JsonResponse = {
   status: (code: number) => JsonResponse;

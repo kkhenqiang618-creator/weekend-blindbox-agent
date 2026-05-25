@@ -1,11 +1,11 @@
-import { composeBlindBox, selectBlindBoxTheme } from "./blindBox.ts";
-import { parseIntent } from "./intentParser.ts";
-import type { Plan, Poi, ReplanEvent, UserInput } from "./types.ts";
-import { mockPois } from "../mock/mockPois.ts";
-import { buildRoute, replanRoute } from "../planner/simpleRoutePlanner.ts";
-import { checkAvailability } from "../tools/checkAvailability.ts";
-import { checkQueue } from "../tools/checkQueue.ts";
-import { reserveOrJoinPlan } from "../tools/reserveOrJoinPlan.ts";
+import { composeBlindBox, selectBlindBoxTheme } from "./blindBox";
+import { parseIntent } from "./intentParser";
+import type { Plan, Poi, ReplanEvent, UserInput } from "./types";
+import { mockPois } from "../mock/mockPois";
+import { buildRoute, replanRoute } from "../planner/simpleRoutePlanner";
+import { checkAvailability } from "../tools/checkAvailability";
+import { checkQueue } from "../tools/checkQueue";
+import { reserveOrJoinPlan } from "../tools/reserveOrJoinPlan";
 
 export interface GeneratePlanOptions {
   executeImmediately?: boolean;

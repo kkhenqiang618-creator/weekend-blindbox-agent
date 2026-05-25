@@ -1,4 +1,4 @@
-import type { PeopleType, Requirements, UserInput } from "./types.ts";
+import type { PeopleType, Requirements, UserInput } from "./types";
 
 const DEFAULT_CITY = "深圳";
 const DEFAULT_DURATION_HOURS = 4;

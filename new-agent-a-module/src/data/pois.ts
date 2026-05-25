@@ -1,4 +1,4 @@
 import rawPois from "./pois.json" with { type: "json" };
-import { normalizePois } from "./poiAdapter.ts";
+import { normalizePois } from "./poiAdapter";
 
 export const pois = normalizePois(rawPois);

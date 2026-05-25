@@ -1,4 +1,4 @@
-import { executePlan, generatePlan, handleReplan } from "../agent/orchestrator.ts";
+import { executePlan, generatePlan, handleReplan } from "../agent/orchestrator";
 
 const userInput = {
   rawText: "周六下午想和朋友在深圳玩4小时，想拍照喝咖啡吃点东西，不想排队",

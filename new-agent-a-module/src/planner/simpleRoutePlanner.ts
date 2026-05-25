@@ -1,4 +1,4 @@
-import type { PlanBChange, PlanBResult, Poi, Requirements, ReplanEvent, Route, RouteStep } from "../agent/types.ts";
+import type { PlanBChange, PlanBResult, Poi, Requirements, ReplanEvent, Route, RouteStep } from "../agent/types";
 
 export function buildRoute(requirements: Requirements, pois: Poi[], theme: string): Route {
   const candidates = filterPois(requirements, pois, theme);

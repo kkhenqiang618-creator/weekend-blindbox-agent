@@ -1,4 +1,4 @@
-import type { Poi } from "../agent/types.ts";
+import type { Poi } from "../agent/types";
 
 // Converted from the team's spreadsheet sample. IDs are normalized to be unique
 // because the source sheet currently repeats poi_001 across categories.

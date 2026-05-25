@@ -1,4 +1,4 @@
-import type { PeopleType, Poi, QueueLevel } from "../agent/types.ts";
+import type { PeopleType, Poi, QueueLevel } from "../agent/types";
 
 type RawPoi = Record<string, unknown>;
 

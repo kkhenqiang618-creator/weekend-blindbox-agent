@@ -1,5 +1,5 @@
-import type { Requirements, UserInput } from "./types.ts";
-import { normalizeRequirements } from "./intentRules.ts";
+import type { Requirements, UserInput } from "./types";
+import { normalizeRequirements } from "./intentRules";
 
 interface ChatCompletionResponse {
   choices?: Array<{

@@ -4,7 +4,7 @@ import {
   handleOptions,
   sendError,
   setCors,
-} from "./_agent.ts";
+} from "./agent-shared";
 
 export default async function handler(req: ApiRequest, res: any) {
   if (handleOptions(req, res)) return;
