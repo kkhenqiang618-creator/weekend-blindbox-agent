@@ -1,5 +1,5 @@
-import { generatePlan, handleReplan } from "../agent/orchestrator";
-import { pois } from "../data/pois";
+import { generatePlan, handleReplan } from "../agent/orchestrator.ts";
+import { pois } from "../data/pois.ts";
 
 const userInput = {
   rawText:  "现在有点无聊，有没有什么可以打卡拍照的地方？",

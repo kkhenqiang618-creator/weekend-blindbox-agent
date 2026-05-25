@@ -1,6 +1,6 @@
-import type { Requirements, UserInput } from "./types";
-import { parseIntentWithLLM } from "./llmIntentParser";
-import { parseIntentWithRules } from "./intentRules";
+import type { Requirements, UserInput } from "./types.ts";
+import { parseIntentWithLLM } from "./llmIntentParser.ts";
+import { parseIntentWithRules } from "./intentRules.ts";
 
 export async function parseIntent(userInput: UserInput): Promise<Requirements> {
   try {

@@ -1,4 +1,4 @@
-import { pois } from "../data/pois";
+import { pois } from "../data/pois.ts";
 
 const validTypes = new Set(["餐饮正餐", "轻食甜饮", "文化体验", "户外散步", "休闲娱乐", "拍照地标"]);
 const validPeople = new Set(["单人", "情侣", "朋友", "亲子"]);

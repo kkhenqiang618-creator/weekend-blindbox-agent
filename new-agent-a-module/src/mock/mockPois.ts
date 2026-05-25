@@ -1,4 +1,4 @@
-import type { Poi } from "../agent/types";
+import type { Poi } from "../agent/types.ts";
 
 export const mockPois: Poi[] = [
   {

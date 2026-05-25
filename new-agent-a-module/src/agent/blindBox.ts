@@ -1,4 +1,4 @@
-import type { BlindBox, Requirements, Route, ToolResult } from "./types";
+import type { BlindBox, Requirements, Route, ToolResult } from "./types.ts";
 
 interface ThemeRule {
   theme: string;

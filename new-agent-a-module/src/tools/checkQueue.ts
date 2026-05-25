@@ -1,4 +1,4 @@
-import type { Route, ToolResult } from "../agent/types";
+import type { Route, ToolResult } from "../agent/types.ts";
 
 export async function checkQueue(route: Route): Promise<ToolResult[]> {
   return route.steps.map((step) => {
