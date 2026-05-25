@@ -23,7 +23,7 @@ export function parseIntentWithRules(userInput: UserInput): Requirements {
     city: quick.city ?? extractCity(rawText) ?? DEFAULT_CITY,
     durationHours: quick.durationHours ?? extractDurationHours(rawText) ?? DEFAULT_DURATION_HOURS,
     budgetMax: normalizeBudget(quick.budget) ?? extractBudget(rawText) ?? DEFAULT_BUDGET_MAX,
-    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText),
+    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText) ?? undefined,
     peopleType: quick.peopleType ?? extractPeopleType(rawText) ?? DEFAULT_PEOPLE_TYPE,
     preferences: preferences.length > 0 ? preferences : ["美食", "休闲"],
     constraints,

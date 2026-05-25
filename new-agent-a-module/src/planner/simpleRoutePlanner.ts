@@ -201,7 +201,7 @@ function findReplacement(
 function matchesEvent(event: ReplanEvent, poi: Poi): boolean {
   if (event.type === "queue") return poi.queueLevel === "low";
   if (event.type === "rain") return poi.weatherSensitive === false || poi.limits.includes("室内") || poi.limits.includes("雨天可去");
-  if (event.type === "unavailable") return poi.bookingRequired !== true || poi.availableTools?.includes("bookingMock");
+  if (event.type === "unavailable") return poi.bookingRequired !== true || (poi.availableTools?.includes("bookingMock") ?? false);
   return true;
 }
 
