@@ -1,0 +1,126 @@
+export type PeopleType = "单人" | "情侣" | "朋友" | "亲子";
+
+export type QueueLevel = "low" | "medium" | "high";
+
+export type ToolStatus = "waiting" | "running" | "success" | "failed";
+
+export interface UserInput {
+  rawText: string;
+  quickSelections?: {
+    budget?: string | number;
+    peopleType?: PeopleType;
+    preferences?: string[];
+    constraints?: string[];
+    city?: string;
+    durationHours?: number;
+    distanceLevel?: string;
+  };
+}
+
+export interface Requirements {
+  city: string;
+  durationHours: number;
+  budgetMax: number;
+  distanceLevel?: string;
+  peopleType: PeopleType;
+  preferences: string[];
+  constraints: string[];
+  timeText: string;
+  rawText: string;
+  intentSource?: "llm" | "rules";
+  intentFallbackReason?: string;
+}
+
+export interface Poi {
+  id: string;
+  name: string;
+  type: string;
+  subType: string;
+  address?: string;
+  area?: string;
+  businessDistrict: string;
+  price: number;
+  priceLevel?: string;
+  meituanRating?: number;
+  reviewCount?: number;
+  tags: string[];
+  limits: string[];
+  fitPeople: PeopleType[];
+  stayMinutes: number;
+  openTime?: string;
+  queueLevel: QueueLevel;
+  distanceLevel?: string;
+  mockMeituanUrl?: string;
+  reason: string;
+  blindBoxThemes?: string[];
+  availableTools?: string[];
+  bookingRequired?: boolean;
+  weatherSensitive?: boolean;
+  replaceableBy?: string[];
+  priorityScore?: number;
+}
+
+export interface RouteStep {
+  order: number;
+  role: "activity" | "break" | "meal" | "ending";
+  poi: Poi;
+  startTimeText?: string;
+  note: string;
+}
+
+export interface Route {
+  totalMinutes: number;
+  totalBudget: number;
+  steps: RouteStep[];
+}
+
+export interface BlindBox {
+  theme: string;
+  title: string;
+  tags: string[];
+  story: string;
+  unlockText: string;
+}
+
+export interface ToolResult {
+  toolName: string;
+  status: ToolStatus;
+  poiId?: string;
+  message: string;
+  result?: Record<string, unknown>;
+}
+
+export interface Plan {
+  requirements: Requirements;
+  blindBox: BlindBox;
+  route: Route;
+  toolStatus: ToolResult[];
+  executionTasks: ToolResult[];
+  planB: PlanBResult | null;
+}
+
+export interface ReplanEvent {
+  type: "queue" | "rain" | "timeout" | "unavailable";
+  poiId?: string;
+  waitMinutes?: number;
+  delayMinutes?: number;
+  message?: string;
+}
+
+export interface PlanBChange {
+  action: "replace" | "shorten" | "remove";
+  from?: string;
+  to?: string;
+  reason: string;
+}
+
+export interface PlanBResult {
+  event: ReplanEvent;
+  impact: string;
+  beforeRoute: Route;
+  afterRoute: Route;
+  changes: PlanBChange[];
+  keptPreferences: string[];
+  sacrificed: string[];
+  message: string;
+}
