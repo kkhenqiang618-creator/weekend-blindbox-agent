@@ -1,6 +1,3 @@
-import { generatePlan, executePlan, handleReplan } from "../new-agent-a-module/src/agent/orchestrator";
-import { pois } from "../new-agent-a-module/src/data/pois";
-
 type JsonResponse = {
   status: (code: number) => JsonResponse;
   json: (body: unknown) => void;
@@ -33,7 +30,20 @@ export function sendError(res: JsonResponse, err: unknown) {
   res.status(500).json({ error: message });
 }
 
+async function loadAgent() {
+  const orchestrator = await import("../new-agent-a-module/src/agent/orchestrator");
+  const data = await import("../new-agent-a-module/src/data/pois");
+
+  return {
+    generatePlan: orchestrator.generatePlan,
+    executePlan: orchestrator.executePlan,
+    handleReplan: orchestrator.handleReplan,
+    pois: data.pois,
+  };
+}
+
 export async function generateWeekendPlan(body: Record<string, unknown>) {
+  const { generatePlan, pois } = await loadAgent();
   const userInput = {
     rawText: typeof body.rawText === "string" ? body.rawText : "",
     quickSelections:
@@ -46,14 +56,15 @@ export async function generateWeekendPlan(body: Record<string, unknown>) {
 }
 
 export async function executeWeekendPlan(body: Record<string, unknown>) {
+  const { executePlan } = await loadAgent();
   return executePlan(body.plan as Parameters<typeof executePlan>[0]);
 }
 
 export async function replanWeekendRoute(body: Record<string, unknown>) {
+  const { handleReplan, pois } = await loadAgent();
   return handleReplan(
     body.event as Parameters<typeof handleReplan>[0],
     body.plan as Parameters<typeof handleReplan>[1],
     { pois },
   );
 }
-
