@@ -100,7 +100,7 @@ export interface Plan {
 }
 
 export interface ReplanEvent {
-  type: "queue" | "rain" | "timeout" | "unavailable";
+  type: "queue" | "rain" | "timeout" | "unavailable" | "closed";
   poiId?: string;
   waitMinutes?: number;
   delayMinutes?: number;

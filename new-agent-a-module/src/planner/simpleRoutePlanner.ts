@@ -3,18 +3,33 @@ import type { PlanBChange, PlanBResult, Poi, Requirements, ReplanEvent, Route, R
 export function buildRoute(requirements: Requirements, pois: Poi[], theme: string): Route {
   const candidates = filterPois(requirements, pois, theme);
   const steps: RouteStep[] = [];
+  const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
+  const maxMinutes = targetMinutes + 30;
 
   const firstActivity = pickFirst(candidates, ["拍照地标", "户外散步", "文化体验", "休闲娱乐"]);
-  const breakStop = pickFirst(candidates, ["轻食甜饮"], [firstActivity?.id]);
-  const meal = pickFirst(candidates, ["餐饮正餐"], [firstActivity?.id, breakStop?.id]);
-  const ending = pickFirst(candidates, ["拍照地标", "户外散步", "文化体验"], [firstActivity?.id, breakStop?.id, meal?.id]);
+  addStepIfFits(steps, firstActivity, maxMinutes);
 
-  const selected = [firstActivity, breakStop, meal, ending].filter(Boolean) as Poi[];
-  const fallbackSelected = selected.length >= 3
-    ? selected
-    : candidates.slice(0, Math.min(4, candidates.length));
+  const breakStop = pickFirst(candidates, ["轻食甜饮"], usedIds(steps));
+  addStepIfFits(steps, breakStop, maxMinutes);
 
-  fallbackSelected.forEach((poi, index) => {
+  const meal = pickFirst(candidates, ["餐饮正餐"], usedIds(steps));
+  addStepIfFits(steps, meal, maxMinutes);
+
+  const ending = pickFirst(candidates, ["拍照地标", "户外散步", "文化体验", "休闲娱乐"], usedIds(steps));
+  addStepIfFits(steps, ending, maxMinutes);
+
+  for (const candidate of candidates) {
+    if (steps.length >= 4) break;
+    if (usedIds(steps).includes(candidate.id)) continue;
+    addStepIfFits(steps, candidate, maxMinutes);
+  }
+
+  const selected = steps.length >= 2
+    ? steps.map((step) => step.poi)
+    : candidates.slice(0, Math.min(3, candidates.length));
+
+  steps.length = 0;
+  selected.forEach((poi, index) => {
     steps.push({
       order: index + 1,
       role: inferRole(poi, index),
@@ -46,6 +61,12 @@ export function filterPois(requirements: Requirements, pois: Poi[], theme?: stri
       return true;
     })
     .sort((a, b) => scorePoi(b, requirements, theme) - scorePoi(a, requirements, theme));
+}
+
+export function rerollRoute(requirements: Requirements, previousRoute: Route, pois: Poi[], theme: string): Route {
+  const previousIds = new Set(previousRoute.steps.map((step) => step.poi.id));
+  const remainingPois = pois.filter((poi) => !previousIds.has(poi.id));
+  return buildRoute(requirements, remainingPois.length > 0 ? remainingPois : pois, theme);
 }
 
 export function replanRoute(
@@ -133,6 +154,23 @@ function pickFirst(candidates: Poi[], types: string[], excludedIds: Array<string
   return candidates.find((poi) => types.includes(poi.type) && !excludedIds.includes(poi.id));
 }
 
+function addStepIfFits(steps: RouteStep[], poi: Poi | undefined, maxMinutes: number): void {
+  if (!poi) return;
+  const currentMinutes = steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0);
+  if (currentMinutes + poi.stayMinutes > maxMinutes && steps.length >= 2) return;
+
+  steps.push({
+    order: steps.length + 1,
+    role: inferRole(poi, steps.length),
+    poi,
+    note: poi.reason
+  });
+}
+
+function usedIds(steps: RouteStep[]): string[] {
+  return steps.map((step) => step.poi.id);
+}
+
 function inferRole(poi: Poi, index: number): RouteStep["role"] {
   if (poi.type === "餐饮正餐") return "meal";
   if (poi.type === "轻食甜饮") return "break";
@@ -150,15 +188,26 @@ function summarizeRoute(steps: RouteStep[]): Route {
 
 function scorePoi(poi: Poi, requirements: Requirements, theme?: string): number {
   let score = poi.priorityScore ?? 50;
+  score += (poi.meituanRating ?? 4) * 10;
+  score += Math.min(10, Math.log10((poi.reviewCount ?? 0) + 1) * 2);
+
   for (const preference of requirements.preferences) {
     if (poi.tags.includes(preference)) score += 12;
+    if (poi.reason.includes(preference)) score += 4;
   }
   for (const constraint of requirements.constraints) {
     if (poi.limits.includes(constraint) || poi.tags.includes(constraint)) score += 10;
   }
+
   if (theme && poi.blindBoxThemes?.includes(theme)) score += 14;
-  if (poi.queueLevel === "low") score += 8;
-  if (poi.queueLevel === "high") score -= 20;
+  if (poi.queueLevel === "low") score += 10;
+  if (poi.queueLevel === "medium") score -= 2;
+  if (poi.queueLevel === "high") score -= 25;
+  if (poi.limits.includes("室内") || poi.limits.includes("雨天可去") || poi.weatherSensitive === false) score += 5;
+  if (poi.price <= 50) score += 5;
+  if (poi.stayMinutes > requirements.durationHours * 60) score -= 30;
+  if (poi.stayMinutes > 150) score -= 8;
+
   return score;
 }
 
@@ -201,13 +250,14 @@ function findReplacement(
 function matchesEvent(event: ReplanEvent, poi: Poi): boolean {
   if (event.type === "queue") return poi.queueLevel === "low";
   if (event.type === "rain") return poi.weatherSensitive === false || poi.limits.includes("室内") || poi.limits.includes("雨天可去");
-  if (event.type === "unavailable") return poi.bookingRequired !== true || (poi.availableTools?.includes("bookingMock") ?? false);
+  if (event.type === "unavailable" || event.type === "closed") return poi.bookingRequired !== true || poi.availableTools?.includes("bookingMock");
   return true;
 }
 
 function buildReplacementReason(event: ReplanEvent, replacement: Poi): string {
   if (event.type === "queue") return `${replacement.name} 排队风险更低，且价格和类型接近。`;
   if (event.type === "rain") return `${replacement.name} 更适合室内或雨天场景。`;
+  if (event.type === "closed") return `${replacement.name} 和原节点类型相近，当前可替换闭店节点。`;
   if (event.type === "unavailable") return `${replacement.name} 当前更容易加入行程。`;
   return `${replacement.name} 更适合当前路线约束。`;
 }
@@ -215,6 +265,7 @@ function buildReplacementReason(event: ReplanEvent, replacement: Poi): string {
 function buildImpact(event: ReplanEvent, poiName: string): string {
   if (event.type === "queue") return `${poiName} 当前排队约 ${event.waitMinutes ?? 45} 分钟，可能影响后续节点。`;
   if (event.type === "rain") return `${poiName} 受天气影响，继续前往体验不稳定。`;
+  if (event.type === "closed") return `${poiName} 当前闭店或不可前往，需要替换同类节点。`;
   if (event.type === "unavailable") return `${poiName} 当前不可预约或不可加入行程。`;
   return `${poiName} 出现超时，可能压缩后续路线。`;
 }

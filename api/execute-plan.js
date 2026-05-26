@@ -95,7 +95,7 @@ function parseIntentWithRules(userInput) {
     city: quick.city ?? extractCity(rawText) ?? DEFAULT_CITY,
     durationHours: quick.durationHours ?? extractDurationHours(rawText) ?? DEFAULT_DURATION_HOURS,
     budgetMax: normalizeBudget(quick.budget) ?? extractBudget(rawText) ?? DEFAULT_BUDGET_MAX,
-    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText) ?? void 0,
+    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText),
     peopleType: quick.peopleType ?? extractPeopleType(rawText) ?? DEFAULT_PEOPLE_TYPE,
     preferences: preferences.length > 0 ? preferences : ["\u7F8E\u98DF", "\u4F11\u95F2"],
     constraints,
@@ -575,13 +575,24 @@ var init_mockPois = __esm({
 function buildRoute(requirements, pois2, theme) {
   const candidates = filterPois(requirements, pois2, theme);
   const steps = [];
+  const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
+  const maxMinutes = targetMinutes + 30;
   const firstActivity = pickFirst(candidates, ["\u62CD\u7167\u5730\u6807", "\u6237\u5916\u6563\u6B65", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"]);
-  const breakStop = pickFirst(candidates, ["\u8F7B\u98DF\u751C\u996E"], [firstActivity?.id]);
-  const meal = pickFirst(candidates, ["\u9910\u996E\u6B63\u9910"], [firstActivity?.id, breakStop?.id]);
-  const ending = pickFirst(candidates, ["\u62CD\u7167\u5730\u6807", "\u6237\u5916\u6563\u6B65", "\u6587\u5316\u4F53\u9A8C"], [firstActivity?.id, breakStop?.id, meal?.id]);
-  const selected = [firstActivity, breakStop, meal, ending].filter(Boolean);
-  const fallbackSelected = selected.length >= 3 ? selected : candidates.slice(0, Math.min(4, candidates.length));
-  fallbackSelected.forEach((poi, index) => {
+  addStepIfFits(steps, firstActivity, maxMinutes);
+  const breakStop = pickFirst(candidates, ["\u8F7B\u98DF\u751C\u996E"], usedIds(steps));
+  addStepIfFits(steps, breakStop, maxMinutes);
+  const meal = pickFirst(candidates, ["\u9910\u996E\u6B63\u9910"], usedIds(steps));
+  addStepIfFits(steps, meal, maxMinutes);
+  const ending = pickFirst(candidates, ["\u62CD\u7167\u5730\u6807", "\u6237\u5916\u6563\u6B65", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"], usedIds(steps));
+  addStepIfFits(steps, ending, maxMinutes);
+  for (const candidate of candidates) {
+    if (steps.length >= 4) break;
+    if (usedIds(steps).includes(candidate.id)) continue;
+    addStepIfFits(steps, candidate, maxMinutes);
+  }
+  const selected = steps.length >= 2 ? steps.map((step) => step.poi) : candidates.slice(0, Math.min(3, candidates.length));
+  steps.length = 0;
+  selected.forEach((poi, index) => {
     steps.push({
       order: index + 1,
       role: inferRole(poi, index),
@@ -679,6 +690,20 @@ function replanRoute(event, currentRoute, pois2, requirements) {
 function pickFirst(candidates, types, excludedIds = []) {
   return candidates.find((poi) => types.includes(poi.type) && !excludedIds.includes(poi.id));
 }
+function addStepIfFits(steps, poi, maxMinutes) {
+  if (!poi) return;
+  const currentMinutes = steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0);
+  if (currentMinutes + poi.stayMinutes > maxMinutes && steps.length >= 2) return;
+  steps.push({
+    order: steps.length + 1,
+    role: inferRole(poi, steps.length),
+    poi,
+    note: poi.reason
+  });
+}
+function usedIds(steps) {
+  return steps.map((step) => step.poi.id);
+}
 function inferRole(poi, index) {
   if (poi.type === "\u9910\u996E\u6B63\u9910") return "meal";
   if (poi.type === "\u8F7B\u98DF\u751C\u996E") return "break";
@@ -694,15 +719,23 @@ function summarizeRoute(steps) {
 }
 function scorePoi(poi, requirements, theme) {
   let score = poi.priorityScore ?? 50;
+  score += (poi.meituanRating ?? 4) * 10;
+  score += Math.min(10, Math.log10((poi.reviewCount ?? 0) + 1) * 2);
   for (const preference of requirements.preferences) {
     if (poi.tags.includes(preference)) score += 12;
+    if (poi.reason.includes(preference)) score += 4;
   }
   for (const constraint of requirements.constraints) {
     if (poi.limits.includes(constraint) || poi.tags.includes(constraint)) score += 10;
   }
   if (theme && poi.blindBoxThemes?.includes(theme)) score += 14;
-  if (poi.queueLevel === "low") score += 8;
-  if (poi.queueLevel === "high") score -= 20;
+  if (poi.queueLevel === "low") score += 10;
+  if (poi.queueLevel === "medium") score -= 2;
+  if (poi.queueLevel === "high") score -= 25;
+  if (poi.limits.includes("\u5BA4\u5185") || poi.limits.includes("\u96E8\u5929\u53EF\u53BB") || poi.weatherSensitive === false) score += 5;
+  if (poi.price <= 50) score += 5;
+  if (poi.stayMinutes > requirements.durationHours * 60) score -= 30;
+  if (poi.stayMinutes > 150) score -= 8;
   return score;
 }
 function findTargetStep(event, currentRoute) {
@@ -716,11 +749,11 @@ function findTargetStep(event, currentRoute) {
   return currentRoute.steps.at(-1);
 }
 function findReplacement(event, targetPoi, pois2, requirements, currentRoute) {
-  const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
+  const usedIds2 = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
-  const directReplacement = pois2.find((poi) => replaceableIds.includes(poi.id) && !usedIds.has(poi.id));
+  const directReplacement = pois2.find((poi) => replaceableIds.includes(poi.id) && !usedIds2.has(poi.id));
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
-  return pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => poi.type === targetPoi.type || event.type === "rain").filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
+  return pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => poi.type === targetPoi.type || event.type === "rain").filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
     const sameDistrictA = a.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
     const sameDistrictB = b.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
     return sameDistrictB + scorePoi(b, requirements) - (sameDistrictA + scorePoi(a, requirements));
@@ -729,18 +762,20 @@ function findReplacement(event, targetPoi, pois2, requirements, currentRoute) {
 function matchesEvent(event, poi) {
   if (event.type === "queue") return poi.queueLevel === "low";
   if (event.type === "rain") return poi.weatherSensitive === false || poi.limits.includes("\u5BA4\u5185") || poi.limits.includes("\u96E8\u5929\u53EF\u53BB");
-  if (event.type === "unavailable") return poi.bookingRequired !== true || (poi.availableTools?.includes("bookingMock") ?? false);
+  if (event.type === "unavailable" || event.type === "closed") return poi.bookingRequired !== true || poi.availableTools?.includes("bookingMock");
   return true;
 }
 function buildReplacementReason(event, replacement) {
   if (event.type === "queue") return `${replacement.name} \u6392\u961F\u98CE\u9669\u66F4\u4F4E\uFF0C\u4E14\u4EF7\u683C\u548C\u7C7B\u578B\u63A5\u8FD1\u3002`;
   if (event.type === "rain") return `${replacement.name} \u66F4\u9002\u5408\u5BA4\u5185\u6216\u96E8\u5929\u573A\u666F\u3002`;
+  if (event.type === "closed") return `${replacement.name} \u548C\u539F\u8282\u70B9\u7C7B\u578B\u76F8\u8FD1\uFF0C\u5F53\u524D\u53EF\u66FF\u6362\u95ED\u5E97\u8282\u70B9\u3002`;
   if (event.type === "unavailable") return `${replacement.name} \u5F53\u524D\u66F4\u5BB9\u6613\u52A0\u5165\u884C\u7A0B\u3002`;
   return `${replacement.name} \u66F4\u9002\u5408\u5F53\u524D\u8DEF\u7EBF\u7EA6\u675F\u3002`;
 }
 function buildImpact(event, poiName) {
   if (event.type === "queue") return `${poiName} \u5F53\u524D\u6392\u961F\u7EA6 ${event.waitMinutes ?? 45} \u5206\u949F\uFF0C\u53EF\u80FD\u5F71\u54CD\u540E\u7EED\u8282\u70B9\u3002`;
   if (event.type === "rain") return `${poiName} \u53D7\u5929\u6C14\u5F71\u54CD\uFF0C\u7EE7\u7EED\u524D\u5F80\u4F53\u9A8C\u4E0D\u7A33\u5B9A\u3002`;
+  if (event.type === "closed") return `${poiName} \u5F53\u524D\u95ED\u5E97\u6216\u4E0D\u53EF\u524D\u5F80\uFF0C\u9700\u8981\u66FF\u6362\u540C\u7C7B\u8282\u70B9\u3002`;
   if (event.type === "unavailable") return `${poiName} \u5F53\u524D\u4E0D\u53EF\u9884\u7EA6\u6216\u4E0D\u53EF\u52A0\u5165\u884C\u7A0B\u3002`;
   return `${poiName} \u51FA\u73B0\u8D85\u65F6\uFF0C\u53EF\u80FD\u538B\u7F29\u540E\u7EED\u8DEF\u7EBF\u3002`;
 }
@@ -2993,23 +3028,21 @@ var init_pois2 = __esm({
   }
 });
 
-// api/execute-plan.ts
+// api-src/execute-plan.ts
 var execute_plan_exports = {};
 __export(execute_plan_exports, {
   default: () => handler
 });
 module.exports = __toCommonJS(execute_plan_exports);
 
-// api/agent-shared.ts
+// api-src/agent-shared.ts
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 function handleOptions(req, res) {
-  if (req.method !== "OPTIONS") {
-    return false;
-  }
+  if (req.method !== "OPTIONS") return false;
   setCors(res);
   res.status(204).json({});
   return true;
@@ -3028,12 +3061,8 @@ async function loadAgent() {
     pois: data.pois
   };
 }
-async function executeWeekendPlan(body) {
-  const { executePlan: executePlan2 } = await loadAgent();
-  return executePlan2(body.plan);
-}
 
-// api/execute-plan.ts
+// api-src/execute-plan.ts
 async function handler(req, res) {
   if (handleOptions(req, res)) return;
   setCors(res);
@@ -3042,7 +3071,8 @@ async function handler(req, res) {
     return;
   }
   try {
-    const plan = await executeWeekendPlan(req.body ?? {});
+    const { executePlan: executePlan2 } = await loadAgent();
+    const plan = await executePlan2(req.body?.plan);
     res.status(200).json(plan);
   } catch (err) {
     sendError(res, err);

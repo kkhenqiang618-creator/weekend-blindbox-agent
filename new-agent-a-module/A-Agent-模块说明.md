@@ -173,6 +173,40 @@ handleReplan
   -> return updatedPlan
 ```
 
+## C 的 ranking.py 如何处理
+
+C 提供的 `ranking.py` 已作为规则参考保存在：
+
+```text
+docs/reference/ranking.py
+```
+
+注意：
+
+```text
+ranking.py 不作为 Vercel 运行时文件。
+当前项目仍然使用 TypeScript 版本的路线规划逻辑。
+```
+
+已经合并进 TypeScript 的能力：
+
+```text
+1. POI 字段校验思路 -> npm run check:pois
+2. 按用户需求筛选 POI -> src/planner/simpleRoutePlanner.ts
+3. 根据评分、排队、室内、价格进行排序 -> scorePoi
+4. 根据用户时长生成 4-6 小时路线 -> buildRoute
+5. 排队、下雨、闭店/不可用重规划 -> replanRoute
+```
+
+B 前端仍然只需要调用：
+
+```ts
+generatePlan(userInput, { pois })
+handleReplan(event, plan, { pois })
+```
+
+不需要调用 Python。
+
 ## 给 B 的调用示例
 
 ```ts
