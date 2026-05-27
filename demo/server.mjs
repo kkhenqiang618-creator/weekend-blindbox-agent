@@ -6,15 +6,18 @@
  */
 
 import http from 'node:http';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const AGENT_MODULE_PATH = '/Users/eating/Desktop/new-agent-a-module';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const AGENT_MODULE_PATH = resolve(__dirname, '..', 'new-agent-a-module');
 
 // Dynamic imports
 let generatePlan, executePlan, handleReplan, pois;
 
 async function loadAgent() {
-  const orchestrator = await import(`${AGENT_MODULE_PATH}/src/agent/orchestrator.ts`);
-  const dataModule = await import(`${AGENT_MODULE_PATH}/src/data/pois.ts`);
+  const orchestrator = await import(pathToFileURL(resolve(AGENT_MODULE_PATH, 'src/agent/orchestrator.ts')).href);
+  const dataModule = await import(pathToFileURL(resolve(AGENT_MODULE_PATH, 'src/data/pois.ts')).href);
   generatePlan = orchestrator.generatePlan;
   executePlan = orchestrator.executePlan;
   handleReplan = orchestrator.handleReplan;
