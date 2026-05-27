@@ -202,10 +202,25 @@ B 前端仍然只需要调用：
 
 ```ts
 generatePlan(userInput, { pois })
+executePlan(plan)
 handleReplan(event, plan, { pois })
 ```
 
 不需要调用 Python。
+
+## 代预订辅助工具说明
+
+当前版本不声明“真实预订成功”，避免把 Mock Tool 写成自导自演。A 模块实现的是 `reservationAssist`：当路线里出现正餐、高/中排队、或数据标记 `bookingRequired` 的节点时，Agent 会生成预订原因、到店时间、电话话术，以及复制话术/拨打电话/打开美团入口等行动入口。
+
+执行路径：
+
+1. `generatePlan` 生成路线，并并行调用 `checkQueue`、`checkAvailability`。
+2. 用户点击“执行/确认路线”后，前端调用 `executePlan`。
+3. `executePlan` 调用 `reserveOrJoinPlan`。
+4. 普通节点返回“已加入行程”。
+5. 需要提前确认的餐饮节点返回 `reservationAssist`，包含 `script`、`actions`、`phone`、`meituanUrl` 和免责声明。
+
+这个设计表达的是：Agent 把“是否需要订座、订座信息怎么说、下一步怎么做”自动准备好，最后一步由用户确认执行；后续如果拿到真实平台 API 权限，可以把 `reservationAssist` 替换为真实 `reservationApi`。
 
 ## 给 B 的调用示例
 

@@ -1,4 +1,4 @@
-import { generatePlan, handleReplan } from "../agent/orchestrator.ts";
+import { executePlan, generatePlan, handleReplan } from "../agent/orchestrator.ts";
 import { pois } from "../data/pois.ts";
 
 const userInput = {
@@ -50,7 +50,21 @@ for (const tool of availabilityResults) {
   console.log(`- ${tool.message}`);
 }
 
-console.log("\nStep 5｜模拟异常事件");
+console.log("\nStep 5｜Agent 代预订辅助工具");
+const executedPlan = await executePlan(plan);
+const reservationTasks = executedPlan.executionTasks.filter((task) => task.toolName === "reservationAssist");
+if (reservationTasks.length === 0) {
+  console.log("本路线没有需要提前确认座位的节点，所有地点已加入行程。");
+} else {
+  for (const task of reservationTasks) {
+    console.log(`- ${task.message}`);
+    console.log(`  原因：${task.result?.reason}`);
+    console.log(`  话术：${task.result?.script}`);
+    console.log("  说明：不声明真实预订成功，只生成话术、拨号/平台入口，等待用户确认执行。");
+  }
+}
+
+console.log("\nStep 6｜模拟异常事件");
 const busyMeal = pois.find((poi) => poi.type === "餐饮正餐" && poi.queueLevel === "high");
 if (!busyMeal) {
   console.log("没有找到可模拟排队异常的餐饮点。");
@@ -78,7 +92,7 @@ if (!busyMeal) {
     { pois }
   );
 
-  console.log("\nStep 6｜Agent 生成 Plan B");
+  console.log("\nStep 7｜Agent 生成 Plan B");
   console.log(`影响：${replanned.planB?.impact}`);
   console.log(`说明：${replanned.planB?.message}`);
   console.log("调整：");

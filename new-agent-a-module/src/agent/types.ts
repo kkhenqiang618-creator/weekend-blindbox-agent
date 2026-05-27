@@ -51,6 +51,7 @@ export interface Poi {
   queueLevel: QueueLevel;
   distanceLevel?: string;
   mockMeituanUrl?: string;
+  phone?: string;
   reason: string;
   blindBoxThemes?: string[];
   availableTools?: string[];
