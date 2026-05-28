@@ -64,6 +64,15 @@ export default function ExecutionPanel({ tasks }: Props) {
         </div>
       )}
 
+      {reservationTasks.length === 0 && (
+        <div className="mb-6 rounded-2xl border border-purple-100 bg-purple-50/70 p-4">
+          <p className="text-sm font-semibold text-purple-950">本次路线无需代预订辅助</p>
+          <p className="mt-1 text-xs leading-relaxed text-purple-500">
+            当前路线没有命中高排队、热门正餐或必须预约节点，因此 Agent 只把地点加入行程。
+          </p>
+        </div>
+      )}
+
       {normalTasks.length > 0 && (
         <div className="space-y-3">
           {normalTasks.map((task, i) => {

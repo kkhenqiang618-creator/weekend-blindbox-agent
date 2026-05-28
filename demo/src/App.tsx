@@ -239,6 +239,10 @@ export default function App() {
 
             <RouteTimeline route={plan.route} />
 
+            {step === 'executed' && plan.executionTasks && (
+              <ExecutionPanel tasks={plan.executionTasks} />
+            )}
+
             <ToolStatusPanel toolStatus={plan.toolStatus} plan={plan} />
 
             {step === 'plan' && (
@@ -293,10 +297,6 @@ export default function App() {
                   触发下雨 Plan B
                 </button>
               </div>
-            )}
-
-            {step === 'executed' && plan.executionTasks && (
-              <ExecutionPanel tasks={plan.executionTasks} />
             )}
 
             {step === 'planb' && plan.planB && (
