@@ -22,6 +22,7 @@ function normalizePoi(raw: RawPoi): Poi {
     address: optionalString(raw.address),
     area: optionalString(raw.area),
     businessDistrict: asString(raw.businessDistrict, "未知商圈"),
+    routeCluster: optionalString(raw.routeCluster),
     price: asNumber(raw.price, 0),
     priceLevel: optionalString(raw.priceLevel),
     meituanRating: optionalNumber(raw.meituanRating),

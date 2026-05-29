@@ -573,7 +573,10 @@ var init_mockPois = __esm({
 
 // new-agent-a-module/src/planner/simpleRoutePlanner.ts
 function buildRoute(requirements, pois2, theme) {
-  const candidates = filterPois(requirements, pois2, theme);
+  const allCandidates = filterPois(requirements, pois2, theme);
+  const routeCluster = selectRouteCluster(allCandidates, requirements, theme);
+  const clusteredCandidates = routeCluster ? allCandidates.filter((poi) => poi.routeCluster === routeCluster) : allCandidates;
+  const candidates = clusteredCandidates.length >= 2 ? clusteredCandidates : allCandidates;
   const steps = [];
   const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
   const maxMinutes = targetMinutes + 30;
@@ -604,8 +607,9 @@ function buildRoute(requirements, pois2, theme) {
 }
 function filterPois(requirements, pois2, theme) {
   return pois2.filter((poi) => poi.price <= requirements.budgetMax).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => {
+    if (isFarDistance(poi.distanceLevel) && requirements.distanceLevel !== "10km\u4EE5\u4E0A") return false;
     if (!requirements.distanceLevel || !poi.distanceLevel) return true;
-    if (requirements.distanceLevel === "3-10km") return true;
+    if (requirements.distanceLevel === "3-10km") return isNearOrMediumDistance(poi.distanceLevel);
     return poi.distanceLevel === requirements.distanceLevel;
   }).filter((poi) => {
     if (requirements.constraints.includes("\u4E0D\u60F3\u6392\u961F")) return poi.queueLevel !== "high";
@@ -734,9 +738,28 @@ function scorePoi(poi, requirements, theme) {
   if (poi.queueLevel === "high") score -= 25;
   if (poi.limits.includes("\u5BA4\u5185") || poi.limits.includes("\u96E8\u5929\u53EF\u53BB") || poi.weatherSensitive === false) score += 5;
   if (poi.price <= 50) score += 5;
+  if (isNearDistance(poi.distanceLevel)) score += 15;
+  if (isMediumDistance(poi.distanceLevel)) score += 5;
+  if (isFarDistance(poi.distanceLevel)) score -= 18;
   if (poi.stayMinutes > requirements.durationHours * 60) score -= 30;
   if (poi.stayMinutes > 150) score -= 8;
   return score;
+}
+function selectRouteCluster(candidates, requirements, theme) {
+  const clusters = /* @__PURE__ */ new Map();
+  for (const poi of candidates) {
+    if (!poi.routeCluster) continue;
+    const bucket = clusters.get(poi.routeCluster) ?? { score: 0, types: /* @__PURE__ */ new Set(), count: 0 };
+    bucket.score += scorePoi(poi, requirements, theme);
+    bucket.types.add(poi.type);
+    bucket.count += 1;
+    clusters.set(poi.routeCluster, bucket);
+  }
+  return [...clusters.entries()].filter(([, bucket]) => bucket.count >= 2).sort(([, a], [, b]) => {
+    const scoreA = a.score + a.types.size * 35 + Math.min(a.count, 6) * 8;
+    const scoreB = b.score + b.types.size * 35 + Math.min(b.count, 6) * 8;
+    return scoreB - scoreA;
+  })[0]?.[0];
 }
 function findTargetStep(event, currentRoute) {
   if (event.poiId) return currentRoute.steps.find((step) => step.poi.id === event.poiId);
@@ -751,13 +774,35 @@ function findTargetStep(event, currentRoute) {
 function findReplacement(event, targetPoi, pois2, requirements, currentRoute) {
   const usedIds2 = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
-  const directReplacement = pois2.find((poi) => replaceableIds.includes(poi.id) && !usedIds2.has(poi.id));
+  const directReplacement = pois2.find(
+    (poi) => replaceableIds.includes(poi.id) && !usedIds2.has(poi.id) && isNearEnoughForReplacement(poi, targetPoi)
+  );
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
-  return pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => poi.type === targetPoi.type || event.type === "rain").filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
+  return pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => poi.type === targetPoi.type || event.type === "rain").filter((poi) => isNearEnoughForReplacement(poi, targetPoi)).filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
+    const sameClusterA = a.routeCluster && a.routeCluster === targetPoi.routeCluster ? 35 : 0;
+    const sameClusterB = b.routeCluster && b.routeCluster === targetPoi.routeCluster ? 35 : 0;
     const sameDistrictA = a.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
     const sameDistrictB = b.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
-    return sameDistrictB + scorePoi(b, requirements) - (sameDistrictA + scorePoi(a, requirements));
+    return sameClusterB + sameDistrictB + scorePoi(b, requirements) - (sameClusterA + sameDistrictA + scorePoi(a, requirements));
   })[0];
+}
+function isNearEnoughForReplacement(candidate, targetPoi) {
+  if (isFarDistance(candidate.distanceLevel)) return false;
+  if (targetPoi.routeCluster && candidate.routeCluster) return candidate.routeCluster === targetPoi.routeCluster;
+  if (targetPoi.area && candidate.area) return candidate.area === targetPoi.area;
+  return true;
+}
+function isNearDistance(distanceLevel) {
+  return distanceLevel === "3km\u5185" || distanceLevel === "3km\u4EE5\u5185" || distanceLevel === "near";
+}
+function isMediumDistance(distanceLevel) {
+  return distanceLevel === "3-10km" || distanceLevel === "medium" || !distanceLevel;
+}
+function isNearOrMediumDistance(distanceLevel) {
+  return isNearDistance(distanceLevel) || isMediumDistance(distanceLevel);
+}
+function isFarDistance(distanceLevel) {
+  return distanceLevel === "10km\u4EE5\u4E0A" || distanceLevel === "far";
 }
 function matchesEvent(event, poi) {
   if (event.type === "queue") return poi.queueLevel === "low";
@@ -1001,25 +1046,51 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u7F57\u6E56\u533A\u7B0B\u5C97\u8857\u9053\u6587\u9526\u5317\u8DEF2023\u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u7B0B\u5C97\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4.1,
         reviewCount: 536,
-        tags: ["\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u89E3\u538B", "\u9002\u5408\u5E26\u5A03", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u89E3\u538B",
+          "\u9002\u5408\u5E26\u5A03",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_001",
         reason: "6\u6708\u8377\u82B1\u76DB\u653E\uFF0C\u9002\u5408\u4EB2\u5B50\u548C\u60C5\u4FA3\u6563\u6B65\u62CD\u7167",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_002", "poi_003"],
+        replaceableBy: [
+          "poi_002",
+          "poi_003"
+        ],
         priorityScore: 82
       },
       {
@@ -1029,25 +1100,52 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u5B9D\u5B89\u533A\u897F\u4E61\u8857\u9053\u5F69\u7ED8\u8DEF\u4E0E\u6D32\u77F3\u8DEF\u4EA4\u53C9\u53E3\u4E1C200\u7C73\u8DEF\u5357",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u4E5D\u56F4\u56FD\u9645\u603B\u90E8\u533A",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u89E3\u538B", "\u9002\u5408\u5E26\u5A03", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u89E3\u538B",
+          "\u9002\u5408\u5E26\u5A03",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_002",
         reason: "\u57CE\u5E02\u7EFF\u6D32\uFF0C\u5C0F\u4F17\u5B89\u9759\uFF0C\u62CD\u7167\u51FA\u7247",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u5C0F\u4F17\u6E05\u51C0\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u5C0F\u4F17\u6E05\u51C0\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_001", "poi_004"],
+        replaceableBy: [
+          "poi_001",
+          "poi_004"
+        ],
         priorityScore: 80
       },
       {
@@ -1057,25 +1155,52 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u5357\u5C71\u533A\u5357\u5934\u8857\u9053\u5357\u5149\u8DEF\u4E0E\u5357\u5934\u8857\u4EA4\u754C\u5904",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3/\u5357\u5934\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 5,
         reviewCount: 536,
-        tags: ["\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u89E3\u538B", "\u5C0F\u4F17", "\u9002\u5408\u5E26\u5A03", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u89E3\u538B",
+          "\u5C0F\u4F17",
+          "\u9002\u5408\u5E26\u5A03",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_003",
         reason: "\u53E4\u8354\u679D\u6811\u591A\uFF0C\u7EFF\u610F\u6CBB\u6108",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u81EA\u7136\u653E\u677E\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u81EA\u7136\u653E\u677E\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_001", "poi_004"],
+        replaceableBy: [
+          "poi_001",
+          "poi_004"
+        ],
         priorityScore: 85
       },
       {
@@ -1085,25 +1210,52 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u798F\u7530\u533A\u534E\u5BCC\u8857\u9053\u632F\u534E\u897F\u8DEF1\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u534E\u5F3A\u5317/\u798F\u7530\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.9,
         reviewCount: 536,
-        tags: ["\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u89E3\u538B", "\u9002\u5408\u5E26\u5A03", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D", "\u5BA0\u7269\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u89E3\u538B",
+          "\u9002\u5408\u5E26\u5A03",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D",
+          "\u5BA0\u7269\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_004",
         reason: "\u798F\u7530\u5E02\u4E2D\u5FC3\u91CE\u9910\u7EFF\u5730\uFF0C\u95F9\u4E2D\u53D6\u9759",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u5BA0\u7269\u53CB\u597D\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u5BA0\u7269\u53CB\u597D\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_003", "poi_008"],
+        replaceableBy: [
+          "poi_003",
+          "poi_008"
+        ],
         priorityScore: 79
       },
       {
@@ -1113,25 +1265,51 @@ var init_pois = __esm({
         subType: "\u6808\u9053\u3001\u8349\u5730",
         address: "\u7F57\u6E56\u533A\u4E1C\u6E56\u8857\u9053\u6C99\u6E7E\u8DEF\u4E0E\u6DD8\u91D1\u5C71\u7EFF\u9053\u4EA4\u53C9\u53E3\u897F160\u7C73",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u5E03\u5FC3/\u7FE0\u7AF9\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.5,
         reviewCount: 536,
-        tags: ["\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u5C0F\u4F17", "\u9002\u5408\u5E26\u5A03"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D", "\u5BA0\u7269\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u5C0F\u4F17",
+          "\u9002\u5408\u5E26\u5A03"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D",
+          "\u5BA0\u7269\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 180,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_005",
         reason: "\u5C71\u666F\u6E56\u666F\uFF0C\u665A\u971E\u8D85\u7F8E\uFF0C\u905B\u5A03\u905B\u72D7\u7686\u5B9C",
-        blindBoxThemes: ["\u5C71\u91CE\u8F7B\u5F92\u6B65\u76D2", "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5C71\u91CE\u8F7B\u5F92\u6B65\u76D2",
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_006", "poi_008"],
+        replaceableBy: [
+          "poi_006",
+          "poi_008"
+        ],
         priorityScore: 78
       },
       {
@@ -1141,25 +1319,49 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u7F57\u6E56\u533A\u9EC4\u8D1D\u8857\u9053\u7231\u56FD\u8DEF1\u885711\u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u559C\u835F\u57CE/\u6C34\u5E93\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4.3,
         reviewCount: 536,
-        tags: ["\u5F92\u6B65", "\u89E3\u538B", "\u9002\u5408\u5E26\u5A03"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D", "\u9700\u8981\u9884\u7EA6"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u5F92\u6B65",
+          "\u89E3\u538B",
+          "\u9002\u5408\u5E26\u5A03"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D",
+          "\u9700\u8981\u9884\u7EA6"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "06:00-23:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_006",
         reason: "\u83CA\u82B1\u5C55\u3001\u52A8\u7269\u82D1\u3001\u6C34\u5E93\u89C2\u666F\u53F0",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: true,
         weatherSensitive: true,
-        replaceableBy: ["poi_001", "poi_005"],
+        replaceableBy: [
+          "poi_001",
+          "poi_005"
+        ],
         priorityScore: 83
       },
       {
@@ -1169,25 +1371,51 @@ var init_pois = __esm({
         subType: "\u4F4F\u5B85\u697C",
         address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u65B0\u6E56\u533A\u4E0E\u5174\u534E\u4E00\u8DEF\u4EA4\u6C47\u5904",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 5,
         reviewCount: 536,
-        tags: ["\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167", "\u7597\u6108"],
-        limits: ["\u5BA4\u5185", "\u5BA4\u5916", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3", "\u540C\u4E8B"],
+        tags: [
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167",
+          "\u7597\u6108"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u5BA4\u5916",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 120,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_007",
         reason: "\u6EE1\u5C4F\u7EFF\u610F\uFF0C\u6CBB\u6108\u6253\u5DE5\u4EBA\uFF0C\u62CD\u7167\u5723\u5730",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_002", "poi_003"],
+        replaceableBy: [
+          "poi_002",
+          "poi_003"
+        ],
         priorityScore: 86
       },
       {
@@ -1197,25 +1425,50 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u5357\u5C71\u533A\u6C99\u6CB3\u8857\u9053\u6865\u57CE\u4E1C\u88576\u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u534E\u4FA8\u57CE\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4,
         reviewCount: 536,
-        tags: ["\u7597\u6108", "\u5F92\u6B65", "\u8FD0\u52A8", "\u89E3\u538B"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D", "\u5BA0\u7269\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u5F92\u6B65",
+          "\u8FD0\u52A8",
+          "\u89E3\u538B"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D",
+          "\u5BA0\u7269\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_008",
         reason: "\u7EFF\u91CE\u4ED9\u8E2A\uFF0C\u6D6E\u6865\u7011\u5E03\uFF0C\u5149\u5F71\u6811\u6D1E",
-        blindBoxThemes: ["\u5C71\u91CE\u8F7B\u5F92\u6B65\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5C71\u91CE\u8F7B\u5F92\u6B65\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_003", "poi_004"],
+        replaceableBy: [
+          "poi_003",
+          "poi_004"
+        ],
         priorityScore: 81
       },
       {
@@ -1225,25 +1478,49 @@ var init_pois = __esm({
         subType: "\u516C\u56ED",
         address: "\u7F57\u6E56\u533A\u6E05\u6C34\u6CB3\u8857\u9053\u6E05\u6C34\u6CB3\u4E00\u8DEF112\u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u6E05\u6C34\u6CB3\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.9,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u5C0F\u4F17"],
-        limits: ["\u5BA4\u5185", "\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u5C0F\u4F17"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_009",
         reason: "\u590D\u53E4\u5DE5\u4E1A\u98CE\uFF0C\u591A\u8F86\u9648\u65E7\u706B\u8F66\uFF0C\u6444\u5F71\u53D1\u70E7\u53CB\u62CD\u6444\u7684\u7406\u60F3\u4E4B\u5730\uFF0C\u9634\u5929\u9508\u8272\u94C1\u8F68\u4E0E\u7070\u8499\u8499\u5929\u7A7A\u78B0\u649E\u51FA\u7535\u5F71\u8D28\u611F",
-        blindBoxThemes: ["\u5C0F\u4F17\u6E05\u51C0\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5C0F\u4F17\u6E05\u51C0\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_010", "poi_011"],
+        replaceableBy: [
+          "poi_010",
+          "poi_011"
+        ],
         priorityScore: 78
       },
       {
@@ -1253,25 +1530,50 @@ var init_pois = __esm({
         subType: "\u5546\u573A",
         address: "\u7F57\u6E56\u533A\u4E1C\u95E8\u8857\u9053\u89E3\u653E\u8DEF3002\u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u8001\u8857\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4.3,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u5C0F\u4F17", "\u591C\u666F"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u5C0F\u4F17",
+          "\u591C\u666F"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_010",
         reason: "\u9002\u5408\u62CD\u7167\u7684\u590D\u53E4\u7F8E\u98DF\u57CE\uFF0C\u706F\u5149\u4EA4\u7EC7\u4E0B\u66F4\u50CF\u4E00\u4E2A\u5F02\u6B21\u5143\u7A7A\u95F4\uFF0C\u8D5B\u535A\u670B\u514B\u98CE",
-        blindBoxThemes: ["\u62CD\u7167\u51FA\u7247\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u62CD\u7167\u51FA\u7247\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_009", "poi_012"],
+        replaceableBy: [
+          "poi_009",
+          "poi_012"
+        ],
         priorityScore: 80
       },
       {
@@ -1281,25 +1583,49 @@ var init_pois = __esm({
         subType: "\u4E66\u5E97",
         address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u6D77\u5E9C\u8DEF\u6B22\u4E50\u6E2F\u6E7E2\u53F7\u4E1C\u5CB8\u697CL1-021",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6B22\u4E50\u6E2F\u6E7E\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316"],
-        limits: ["\u5BA4\u5185", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "10:00-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_011",
         reason: "\u5E97\u5185\u6700\u663E\u8457\u7684\u6807\u5FD7\u662F\u5DE8\u578B\u7EA2\u8272\u87BA\u65CB\u4E66\u67B6\uFF0C\u8D2F\u7A7F\u6982\u5FF5\u533A\uFF0C\u4FA7\u770B\u50CF\u9F7F\u8F6E\uFF0C\u6B63\u770B\u5982\u65F6\u949F\u8868\u76D8\uFF0C\u4F3C\u65F6\u95F4\u4E0E\u77E5\u8BC6\u7684\u6C38\u6052",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_010", "poi_013"],
+        replaceableBy: [
+          "poi_010",
+          "poi_013"
+        ],
         priorityScore: 77
       },
       {
@@ -1309,25 +1635,48 @@ var init_pois = __esm({
         subType: "\u5929\u6865",
         address: "\u798F\u7530\u533A\u901A\u65B0\u5CAD\u5730\u94C1\u7AD9F\u53E3\uFF0C\u4E0A\u6B65\u4E2D\u8DEF\u5929\u6865",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u534E\u5F3A\u5317/\u56ED\u5CAD\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.5,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u5C0F\u4F17"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u5C0F\u4F17"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_012",
         reason: "\u5EFA\u8BAE\u6674\u6717\u591A\u4E91\u7684\u65E5\u51FA\u6216\u65E5\u843D\u524D1\u5C0F\u65F6\u65F6\u95F4\u53BB\uFF0C\u6B64\u65F6\u662F\u62CD\u7167\u9EC4\u91D1\u65F6\u523B\uFF0C\u5149\u7EBF\u67D4\u548C\uFF0C\u89D2\u5EA6\u503E\u659C\uFF0C\u80FD\u62C9\u957F\u9634\u5F71\uFF0C\u589E\u5F3A\u753B\u9762\u6C1B\u56F4\u3001\u7ACB\u4F53\u611F\uFF0C\u6355\u6349\u5230\u6E29\u6696\u8272\u8C03",
-        blindBoxThemes: ["\u5C0F\u4F17\u6E05\u51C0\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5C0F\u4F17\u6E05\u51C0\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_009", "poi_014"],
+        replaceableBy: [
+          "poi_009",
+          "poi_014"
+        ],
         priorityScore: 76
       },
       {
@@ -1337,25 +1686,49 @@ var init_pois = __esm({
         subType: "\u7F8E\u672F\u9986",
         address: "\u5B9D\u5B89\u533A\u6C99\u4E95\u8857\u9053\u677E\u5B89\u8DEF\u5B9D\u5B89\u5168\u81F3\u79D1\u6280\u521B\u65B0\u56ED2\u53F7\u697C1\u697C",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6C99\u4E95\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.7,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u5C0F\u4F17"],
-        limits: ["\u5BA4\u5185", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u5C0F\u4F17"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "10:00-18:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_013",
         reason: "\u6DF1\u5733\u5C0F\u800C\u7F8E\u7684\u7F8E\u672F\u9986\uFF0C\u4E0E\u5973\u6027\u8BAE\u9898\u76F8\u5173\uFF0C\u6781\u7B80\u7684\u7A7A\u95F4\u8BBE\u8BA1\u4E0E\u5C55\u51FA\u7684\u827A\u672F\u4F5C\u54C1\u9002\u914D\u5EA6\u5F88\u9AD8\uFF0C\u9002\u5408\u5408\u62CD\u62CD\u7167",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_011", "poi_015"],
+        replaceableBy: [
+          "poi_011",
+          "poi_015"
+        ],
         priorityScore: 79
       },
       {
@@ -1364,26 +1737,49 @@ var init_pois = __esm({
         type: "\u62CD\u7167\u5730\u6807",
         subType: "\u4F4F\u5B85\u697C",
         address: "\u5357\u5C71\u533A\u897F\u4E3D\u8857\u9053\u77F3\u9F13\u8DEF2019\u53F7",
-        businessDistrict: "\u897F\u4E3D/\u7559\u4ED9\u6D1E\u603B\u90E8\u57FA\u5730\u5546\u5708",
         area: "\u5357\u5C71\u533A",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3.5,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u591C\u666F"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u591C\u666F"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_014",
         reason: "\u5730\u7406\u4F4D\u7F6E\u8F83\u597D\uFF0C\u5468\u8FB9\u5F88\u591A\u516C\u53F8\u603B\u90E8\uFF0C\u5C0F\u533A13\u680B\u697C\u7684\u5DF7\u5B50\u662F\u7F51\u7EA2\u6253\u5361\u70B9",
-        blindBoxThemes: ["\u5C0F\u4F17\u6E05\u51C0\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5C0F\u4F17\u6E05\u51C0\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_012", "poi_016"],
+        replaceableBy: [
+          "poi_012",
+          "poi_016"
+        ],
         priorityScore: 75
       },
       {
@@ -1393,25 +1789,48 @@ var init_pois = __esm({
         subType: "\u9AD8\u7AEF\u5199\u5B57\u697C",
         address: "\u798F\u7530\u533A\u798F\u7530\u8857\u9053\u91D1\u7530\u8DEF3037\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u4F1A\u5C55\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u591C\u666F"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u591C\u666F"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_015",
         reason: "\u9732\u53F0\u9762\u671D\u897F\u8FB9\uFF0C\u53EF\u4EE5\u8F7B\u677E\u773A\u671B\u5E73\u5B89\u91D1\u878D\u4E2D\u5FC3\u3001\u7687\u5EAD\u3001\u5353\u8D8A\u3001\u661F\u6CB3\u7B49\u5E02\u4E2D\u5FC3\u6807\u5FD7\u6027\u5927\u53A6\u3002\u7B49\u5230\u84DD\u8C03\u65F6\u523B\uFF0C\u9713\u8679\u706F\u5149\u95EA\u70C1\uFF0C\u50CF\u6781\u4E86\u5C0F\u8BF4\u91CC\u7684A\u5E02",
-        blindBoxThemes: ["\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_014", "poi_017"],
+        replaceableBy: [
+          "poi_014",
+          "poi_017"
+        ],
         priorityScore: 81
       },
       {
@@ -1421,25 +1840,52 @@ var init_pois = __esm({
         subType: "\u5546\u573A",
         address: "\u798F\u7530\u533A\u798F\u7530\u8857\u9053\u798F\u534E\u4E00\u8DEF348\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5C97\u53A6\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u591C\u666F"],
-        limits: ["\u5BA4\u5185", "\u5BA4\u5916", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D", "\u4E0D\u6613\u6392\u961F"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u591C\u666F"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u5BA4\u5916",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D",
+          "\u4E0D\u6613\u6392\u961F"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_016",
         reason: "\u5546\u5708\u5185\u9AD8\u697C\u6797\u7ACB\uFF0C\u6709\u7687\u5EAD\u4E2D\u5FC3\u3001\u5927\u4E2D\u534E\u3001\u91D1\u4E2D\u73AF\u3001\u6DF1\u5733\u4E4B\u773C\u3001\u5E02\u6C11\u4E2D\u5FC3\u7B49CBD\u5730\u6807\u6027\u5EFA\u7B51\uFF0C\u5728\u706F\u5149\u79C0\u7684\u6C1B\u56F4\u70D8\u6258\u4E0B\uFF0C\u4EFF\u4F5B\u95EF\u5165\u4E86\u8D5B\u535A\u670B\u514B\u4E16\u754C",
-        blindBoxThemes: ["\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_015", "poi_018"],
+        replaceableBy: [
+          "poi_015",
+          "poi_018"
+        ],
         priorityScore: 77
       },
       {
@@ -1449,25 +1895,50 @@ var init_pois = __esm({
         subType: "\u56FE\u4E66\u9986",
         address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u6D77\u79C0\u8DEF\u4E0E\u5B9D\u534E\u8DEF\u4EA4\u53C9\u53E3\u897F\u5357140\u7C73",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6B22\u4E50\u6E2F\u6E7E\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 3,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u9002\u5408\u5E26\u5A03"],
-        limits: ["\u5BA4\u5185", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u9002\u5408\u5E26\u5A03"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_017",
         reason: "\u6DF1\u5733\u65B0\u5F00\u7684\u56FE\u4E66\u9986\uFF0C\u9762\u79EF\u5F88\u5927\uFF0C\u5317\u533A\u4E8C\u697C\u667A\u6167\u6811\u3001\u5916\u4FA7\u7535\u68AF\u7B49\u90FD\u662F\u8457\u540D\u7684\u62CD\u7167\u6253\u5361\u70B9",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_011", "poi_013"],
+        replaceableBy: [
+          "poi_011",
+          "poi_013"
+        ],
         priorityScore: 78
       },
       {
@@ -1477,25 +1948,49 @@ var init_pois = __esm({
         subType: "\u535A\u7269\u9986",
         address: "\u798F\u7530\u533A\u83B2\u82B1\u8857\u9053\u798F\u4E2D\u8DEF184\u53F7\u6DF1\u5733\u5F53\u4EE3\u827A\u672F\u4E0E\u57CE\u5E02\u89C4\u5212\u9986",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5E02\u6C11\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 3,
         reviewCount: 536,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u9002\u5408\u5E26\u5A03"],
-        limits: ["\u5BA4\u5185", "\u96E8\u5929\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u9002\u5408\u5E26\u5A03"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "06:00-23:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_018",
         reason: "\u5EFA\u7B51\u9020\u578B\u72EC\u7279\uFF0C\u878D\u5408\u503E\u659C\u3001\u626D\u66F2\u7B49\u5F02\u578B\u94A2\u7ED3\u6784\u4E0E\u8282\u80FD\u6280\u672F\uFF0C\u5185\u5916\u5145\u6EE1\u67D4\u7F8E\u66F2\u7EBF\u4E0E\u4E0D\u89C4\u5219\u5149\u5F71\u7684\u78B0\u649E\uFF0C\u79D1\u6280\u611F\u5341\u8DB3\uFF0C\u9002\u5408\u62CD\u7167\u6253\u5361",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_013", "poi_016"],
+        replaceableBy: [
+          "poi_013",
+          "poi_016"
+        ],
         priorityScore: 79
       },
       {
@@ -1505,25 +2000,49 @@ var init_pois = __esm({
         subType: "\u4E3B\u9898\u4E50\u56ED",
         address: "\u5357\u5C71\u533A\u4FA8\u57CE\u897F\u8857 18 \u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u534E\u4FA8\u57CE\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_100_plus",
         meituanRating: 4.9,
         reviewCount: 18752,
-        tags: ["\u62CD\u7167", "\u6237\u5916", "\u9002\u5408\u5E26\u5A03", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6237\u5916",
+          "\u9002\u5408\u5E26\u5A03",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 300,
         openTime: "\u5468\u4E00\u81F3\u5468\u65E5 09:30-21:00",
         queueLevel: "high",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_029",
         reason: "\u6DF1\u5733\u8001\u724C\u5927\u578B\u7EFC\u5408\u6E38\u4E50\u56ED\uFF0C\u673A\u52A8\u9879\u76EE\u9F50\u5168\uFF0C\u8282\u5047\u65E5\u591C\u6E38\u6C1B\u56F4\u6D53\u539A\u3002",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u56E2\u5EFA\u72C2\u6B22\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u56E2\u5EFA\u72C2\u6B22\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_030", "poi_031"],
+        replaceableBy: [
+          "poi_030",
+          "poi_031"
+        ],
         priorityScore: 88
       },
       {
@@ -1533,25 +2052,49 @@ var init_pois = __esm({
         subType: "\u4E3B\u9898\u4E50\u56ED",
         address: "\u5357\u5C71\u533A\u6DF1\u5357\u5927\u9053 9037 \u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u534E\u4FA8\u57CE\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_100_plus",
         meituanRating: 4.9,
         reviewCount: 106850,
-        tags: ["\u62CD\u7167", "\u6587\u5316", "\u6237\u5916", "\u56E2\u5EFA"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u6587\u5316",
+          "\u6237\u5916",
+          "\u56E2\u5EFA"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 240,
         openTime: "9:00-22:00",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_030",
         reason: "\u5FAE\u7F29\u4E16\u754C\u540D\u80DC\u666F\u533A\uFF0C\u591C\u666F\u706F\u5149\u7EDD\u7F8E\uFF0C\u6B4C\u821E\u8868\u6F14\u4E30\u5BCC\u3002",
-        blindBoxThemes: ["\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2", "\u62CD\u7167\u51FA\u7247\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2",
+          "\u62CD\u7167\u51FA\u7247\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_029", "poi_032"],
+        replaceableBy: [
+          "poi_029",
+          "poi_032"
+        ],
         priorityScore: 87
       },
       {
@@ -1561,25 +2104,51 @@ var init_pois = __esm({
         subType: "\u4F11\u95F2\u7EFC\u5408\u4F53",
         address: "\u5357\u5C71\u533A\u767D\u77F3\u8DEF\u4E1C 8 \u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u540E\u6D77\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.9,
         reviewCount: 10153,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185", "\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB", "\u5BA0\u7269\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u5BA0\u7269\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 150,
         openTime: "\u5168\u5929\u5F00\u653E\uFF0C\u5546\u94FA 10:00-23:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_031",
         reason: "\u96C6\u6E38\u73A9\u3001\u9910\u996E\u3001\u6C34\u79C0\u8868\u6F14\u4E00\u4F53\u7684\u6EE8\u6D77\u4F11\u95F2\u805A\u96C6\u5730\u3002",
-        blindBoxThemes: ["\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2", "\u7F8E\u98DF\u6253\u5361\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2",
+          "\u7F8E\u98DF\u6253\u5361\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_032", "poi_033"],
+        replaceableBy: [
+          "poi_032",
+          "poi_033"
+        ],
         priorityScore: 84
       },
       {
@@ -1589,25 +2158,49 @@ var init_pois = __esm({
         subType: "\u6B65\u884C\u8857",
         address: "\u7F57\u6E56\u533A\u5EFA\u8BBE\u8DEF\u4E0E\u4E1C\u95E8\u8001\u8857\u4EA4\u53C9\u8DEF\u53E3\u4E1C\u4FA7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u4E1C\u95E8\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.9,
         reviewCount: 6417,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5916", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 180,
         openTime: "10:00-23:00",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_032",
         reason: "\u6DF1\u5733\u8001\u724C\u7F51\u7EA2\u8001\u8857\uFF0C\u7F8E\u98DF\u670D\u9970\u9F50\u5168\uFF0C\u70DF\u706B\u6C14\u5341\u8DB3\u3002",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_031", "poi_034"],
+        replaceableBy: [
+          "poi_031",
+          "poi_034"
+        ],
         priorityScore: 82
       },
       {
@@ -1617,25 +2210,49 @@ var init_pois = __esm({
         subType: "\u751F\u6001\u4F11\u95F2\u666F\u533A",
         address: "\u7F57\u6E56\u533A\u83B2\u5858\u4ED9\u6E56\u8DEF 160 \u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u83B2\u5858\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4.9,
         reviewCount: 10354,
-        tags: ["\u7597\u6108", "\u6587\u5316", "\u6237\u5916", "\u89E3\u538B"],
-        limits: ["\u5BA4\u5916", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7597\u6108",
+          "\u6587\u5316",
+          "\u6237\u5916",
+          "\u89E3\u538B"
+        ],
+        limits: [
+          "\u5BA4\u5916",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 240,
         openTime: "08:00-18:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_033",
         reason: "\u57CE\u5E02\u5929\u7136\u6C27\u5427\uFF0C\u7EFF\u690D\u7E41\u591A\uFF0C\u517C\u5177\u4F11\u95F2\u4E0E\u7948\u798F\u529F\u80FD\u3002",
-        blindBoxThemes: ["\u81EA\u7136\u653E\u677E\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u81EA\u7136\u653E\u677E\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_034", "poi_035"],
+        replaceableBy: [
+          "poi_034",
+          "poi_035"
+        ],
         priorityScore: 86
       },
       {
@@ -1645,25 +2262,48 @@ var init_pois = __esm({
         subType: "\u751F\u6001\u4F11\u95F2\u666F\u533A",
         address: "\u5B9D\u5B89\u533A\u6C99\u4E95\u8857\u9053\u6C11\u4E3B\u5927\u9053",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6C99\u4E95\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.5,
         reviewCount: 17230,
-        tags: ["\u62CD\u7167", "\u7597\u6108", "\u6237\u5916", "\u8FD0\u52A8"],
-        limits: ["\u5BA4\u5916"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u7597\u6108",
+          "\u6237\u5916",
+          "\u8FD0\u52A8"
+        ],
+        limits: [
+          "\u5BA4\u5916"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 210,
         openTime: "9:00-18:00",
         queueLevel: "low",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_034",
         reason: "\u6EE8\u6D77\u751F\u6001\u7530\u56ED\u666F\u533A\uFF0C\u8FDC\u79BB\u95F9\u5E02\uFF0C\u9002\u5408\u6162\u8282\u594F\u653E\u677E\u3002",
-        blindBoxThemes: ["\u81EA\u7136\u653E\u677E\u76D2", "\u5C0F\u4F17\u6E05\u51C0\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u81EA\u7136\u653E\u677E\u76D2",
+          "\u5C0F\u4F17\u6E05\u51C0\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_033", "poi_036"],
+        replaceableBy: [
+          "poi_033",
+          "poi_036"
+        ],
         priorityScore: 80
       },
       {
@@ -1673,25 +2313,49 @@ var init_pois = __esm({
         subType: "\u4F11\u95F2\u7EFC\u5408\u4F53",
         address: "\u798F\u7530\u533A\u798F\u534E\u4E09\u8DEF 269 \u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u4F1A\u5C55\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.8,
         reviewCount: 8222,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 150,
         openTime: "10:00 - \u6B21\u65E5 02:00",
         queueLevel: "medium",
         distanceLevel: "3km\u5185",
         mockMeituanUrl: "mock://meituan/poi_035",
         reason: "\u798F\u7530\u6838\u5FC3\u6F6E\u6D41\u4F11\u95F2\u5730\uFF0C\u5A31\u4E50\u805A\u9910\u805A\u4F1A\u4E00\u7AD9\u5F0F\u89E3\u51B3\u3002",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_031", "poi_037"],
+        replaceableBy: [
+          "poi_031",
+          "poi_037"
+        ],
         priorityScore: 83
       },
       {
@@ -1701,25 +2365,49 @@ var init_pois = __esm({
         subType: "\u4F11\u95F2\u7EFC\u5408\u4F53",
         address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u65B0\u6E56\u8DEF 99 \u53F7",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u524D\u6D77\u65B0\u5B89\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.9,
         reviewCount: 12163,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 180,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_036",
         reason: "\u5B9D\u5B89\u8D85\u5927\u5546\u5708\uFF0C\u5403\u559D\u73A9\u4E50\u4E00\u7AD9\u5F0F\u4F11\u95F2\u5A31\u4E50\u805A\u96C6\u5730\u3002",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_035", "poi_038"],
+        replaceableBy: [
+          "poi_035",
+          "poi_038"
+        ],
         priorityScore: 84
       },
       {
@@ -1729,25 +2417,50 @@ var init_pois = __esm({
         subType: "\u4F11\u95F2\u516C\u56ED",
         address: "\u5357\u5C71\u533A\u6EE8\u6D77\u5927\u9053\uFF08\u798F\u7530-\u5357\u5C71\u4EA4\u754C\uFF09",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6DF1\u5733\u6E7E\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 0,
         priceLevel: "price_le_50",
         meituanRating: 4.9,
         reviewCount: 15564,
-        tags: ["\u62CD\u7167", "\u7597\u6108", "\u6587\u5316", "\u6237\u5916"],
-        limits: ["\u5BA4\u5185", "\u665A\u4E0A\u53EF\u53BB", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u62CD\u7167",
+          "\u7597\u6108",
+          "\u6587\u5316",
+          "\u6237\u5916"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u665A\u4E0A\u53EF\u53BB",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "6:00-23:00",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_037",
         reason: "\u6DF1\u5733\u201C\u57CE\u5E02\u7EFF\u80BA\u201D\uFF0C\u7EA2\u6811\u6797 + \u6D77\u5CB8\u7EBF\uFF0C\u9A91\u884C\u3001\u770B\u65E5\u843D\u3001\u89C2\u9E1F\u7EDD\u4F73\u5730\u3002",
-        blindBoxThemes: ["\u81EA\u7136\u653E\u677E\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u81EA\u7136\u653E\u677E\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: true,
-        replaceableBy: ["poi_033", "poi_039"],
+        replaceableBy: [
+          "poi_033",
+          "poi_039"
+        ],
         priorityScore: 87
       },
       {
@@ -1757,25 +2470,50 @@ var init_pois = __esm({
         subType: "\u4F11\u95F2\u7EFC\u5408\u4F53",
         address: "\u5B9D\u5B89\u533A\u524D\u8FDB\u4E00\u8DEF\u4E0E\u521B\u4E1A\u4E8C\u8DEF\u4EA4\u6C47\u5904",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u7075\u829D\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 0,
         priceLevel: "price_le_150",
         meituanRating: 4.8,
         reviewCount: 2230,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1", "\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185", "\u96E8\u5929\u53EF\u53BB", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u5355\u4EBA", "\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1",
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u96E8\u5929\u53EF\u53BB",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 180,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_038",
         reason: "\u5B9D\u5B89\u5927\u578B\u5546\u573A\uFF0C\u53CC\u5DE8\u5E55\u5F71\u57CE + \u6F6E\u73A9 + \u9910\u996E\uFF0C\u4E00\u7AD9\u5F0F\u4F11\u95F2\u3002",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_036", "poi_035"],
+        replaceableBy: [
+          "poi_036",
+          "poi_035"
+        ],
         priorityScore: 82
       },
       {
@@ -1785,25 +2523,44 @@ var init_pois = __esm({
         subType: "\u7CA4\u83DC",
         address: "\u798F\u7530\u533A\u8F66\u516C\u5E99\u6CF0\u7136\u56DB\u8DEF\u6CF0\u7136\u79D1\u6280\u56ED210\u680B",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u8F66\u516C\u5E99\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 100,
         priceLevel: "price_le_150",
         meituanRating: 4.3,
         reviewCount: 381,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 110,
         openTime: "11:00-23:00",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_039",
         reason: "\u88AB\u8A89\u4E3A\u201C\u6DF1\u5733\u732A\u809A\u9E21\u7B2C1\u540D\u201D\uFF0C\u6C64\u5E95\u7528\u732A\u7B52\u9AA8\u71AC\u5236\uFF0C\u9E21\u8089\u9C9C\u5AE9\u5165\u5473",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u670B\u53CB\u5C0F\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u670B\u53CB\u5C0F\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_040", "poi_041"],
+        replaceableBy: [
+          "poi_040",
+          "poi_041"
+        ],
         priorityScore: 82
       },
       {
@@ -1813,25 +2570,45 @@ var init_pois = __esm({
         subType: "\u897F\u9910/\u725B\u6392",
         address: "\u5357\u5C71\u533A\u6D77\u5CB8\u57CE\u5546\u5708\uFF08\u4FDD\u5229\u6587\u5316\u5E7F\u573A\uFF09",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6D77\u5CB8\u57CE\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 120,
         priceLevel: "price_le_150",
         meituanRating: 4.8,
         reviewCount: 536,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 80,
         openTime: "11:00-22:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_040",
         reason: "\u5CA9\u70E4\u725B\u6392\u642D\u914D\u521B\u610F\u610F\u9762\u9E21\u7FC5\uFF0C\u6C1B\u56F4\u6D6A\u6F2B\uFF0C\u662F\u7EA6\u4F1A\u805A\u9910\u7684\u597D\u53BB\u5904",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_039", "poi_042"],
+        replaceableBy: [
+          "poi_039",
+          "poi_042"
+        ],
         priorityScore: 85
       },
       {
@@ -1841,25 +2618,43 @@ var init_pois = __esm({
         subType: "\u5DDD\u83DC",
         address: "\u5357\u5C71\u533A\u62DB\u5546\u8857\u9053\u6843\u82B1\u56ED\u793E\u533A\u7F8E\u5E74\u5E7F\u573A1\u680B",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u7F8E\u5E74\u5E7F\u573A\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 80,
         priceLevel: "price_le_100",
         meituanRating: 3.9,
         reviewCount: 536,
-        tags: ["\u6027\u4EF7\u6BD4"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB"],
+        tags: [
+          "\u6027\u4EF7\u6BD4"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB"
+        ],
         stayMinutes: 60,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_041",
         reason: "\u6CE5\u7089\u70E4\u8089\u70ED\u95E8\u54C1\u724C\uFF0C\u7279\u8272\u9EBB\u9171\u642D\u914D\u70AD\u70E4\uFF0C\u8089\u9999\u6D53\u90C1\uFF0C\u6027\u4EF7\u6BD4\u9AD8",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u670B\u53CB\u5C0F\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u670B\u53CB\u5C0F\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_040", "poi_043"],
+        replaceableBy: [
+          "poi_040",
+          "poi_043"
+        ],
         priorityScore: 78
       },
       {
@@ -1869,25 +2664,44 @@ var init_pois = __esm({
         subType: "\u6E56\u5317\u83DC",
         address: "\u798F\u7530\u533A\u798F\u534E\u4E00\u8DEF348\u53F7\u5353\u60A6\u4E2D\u5FC3\u897FB2\u5C42B2",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 90,
         priceLevel: "price_le_150",
         meituanRating: 4.5,
         reviewCount: 2678,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 60,
         openTime: "10:30-21:30",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_042",
         reason: "\u73B0\u7168\u85D5\u6C64\u9C9C\u6D53\u5165\u5473\uFF0C\u70ED\u83DC\u73B0\u7092\u5F88\u4E0B\u996D\uFF0C\u6E56\u5317\u98CE\u5473\u5730\u9053",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5BB6\u5EAD\u805A\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5BB6\u5EAD\u805A\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_041", "poi_044"],
+        replaceableBy: [
+          "poi_041",
+          "poi_044"
+        ],
         priorityScore: 83
       },
       {
@@ -1896,26 +2710,46 @@ var init_pois = __esm({
         type: "\u8F7B\u98DF\u751C\u996E",
         subType: "\u70E7\u70E4",
         address: "\u798F\u7530\u533A\u6C99\u5934\u8857\u9053\u6C99\u5C3E\u793E\u533A\u6C99\u5C3E\u4E1C\u675144-1\u53F7",
-        area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u6C99\u5C3E\u5546\u5708",
+        area: "\u798F\u7530\u533A",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 80,
         priceLevel: "price_le_150",
         meituanRating: 4.7,
         reviewCount: 381,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 110,
         openTime: "10:00-04:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_043",
         reason: "\u9547\u5E97\u70E4\u4E32\u548C\u5C0F\u9F99\u867E\u53E3\u7891\u62C9\u6EE1\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u591C\u5BB5\u6C1B\u56F4\u597D",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_044", "poi_045"],
+        replaceableBy: [
+          "poi_044",
+          "poi_045"
+        ],
         priorityScore: 81
       },
       {
@@ -1925,25 +2759,44 @@ var init_pois = __esm({
         subType: "\u7CA4\u83DC\u3001\u5E7F\u5F0F\u65E9\u8336",
         address: "\u7F57\u6E56\u533A\u6842\u56ED\u8857\u9053\u5B9D\u5B89\u5357\u8DEF2078\u53F7\u6DF1\u6E2F\u8C6A\u82D1",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u6842\u56ED\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 60,
         priceLevel: "price_le_150",
         meituanRating: 4.6,
         reviewCount: 52574,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB"
+        ],
         stayMinutes: 80,
         openTime: "10:00-22:00",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_044",
         reason: "\u6DF1\u5733\u65E9\u8336\u754C\u7684\u201C\u6392\u961F\u738B\u201D\uFF0C\u73AF\u5883\u590D\u53E4\uFF0C\u575A\u6301\u5373\u70B9\u5373\u84B8\uFF0C\u70B9\u5FC3\u65B0\u9C9C",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_043", "poi_046"],
+        replaceableBy: [
+          "poi_043",
+          "poi_046"
+        ],
         priorityScore: 84
       },
       {
@@ -1953,25 +2806,45 @@ var init_pois = __esm({
         subType: "\u5DDD\u83DC\u9986",
         address: "\u5357\u5C71\u533A\u8BE6\u7EC6\u5730\u5740",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u5357\u5934\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 70,
         priceLevel: "price_le_150",
         meituanRating: 3.9,
         reviewCount: 536,
-        tags: ["\u6027\u4EF7\u6BD4"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3", "\u540C\u4E8B"],
+        tags: [
+          "\u6027\u4EF7\u6BD4"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 60,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_045",
         reason: "\u4E3B\u6253\u8FC7\u6C34\u9C7C\uFF0C\u9C7C\u8089\u9C9C\u5AE9\uFF0C\u9EBB\u8FA3\u5165\u5473\uFF0C\u5DDD\u5473\u5730\u9053",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u670B\u53CB\u5C0F\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u670B\u53CB\u5C0F\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_044", "poi_047"],
+        replaceableBy: [
+          "poi_044",
+          "poi_047"
+        ],
         priorityScore: 79
       },
       {
@@ -1981,25 +2854,43 @@ var init_pois = __esm({
         subType: "\u65E5\u6599",
         address: "\u5357\u5C71\u533A\u8BE6\u7EC6\u5730\u5740",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u897F\u4E3D\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 120,
         priceLevel: "price_le_150",
         meituanRating: 4.8,
         reviewCount: 536,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_046",
         reason: "\u70AD\u706B\u73B0\u70E4\u70E7\u9E1F+\u6C1B\u56F4\u611F\u5C45\u9152\u5C4B\uFF0C\u662F\u4E0B\u73ED\u5C0F\u914C\u7684\u597D\u53BB\u5904",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_045", "poi_048"],
+        replaceableBy: [
+          "poi_045",
+          "poi_048"
+        ],
         priorityScore: 83
       },
       {
@@ -2009,25 +2900,45 @@ var init_pois = __esm({
         subType: "\u706B\u9505",
         address: "\u5B9D\u5B89\u533A\u9EC4\u7530\u8DEF\u897F11\u5DF71\u53F7",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 100,
         priceLevel: "price_le_100",
         meituanRating: 4.7,
         reviewCount: 2914,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185", "\u665A\u4E0A\u53EF\u53BB"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u665A\u4E0A\u53EF\u53BB"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 110,
         openTime: "11:30-00:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_047",
         reason: "\u4E3B\u6253\u91CD\u5E86\u5730\u644A\u98CE\u5473\u8001\u706B\u9505\uFF0C\u9505\u5E95\u70ED\u83DC\u73B0\u7092\u73B0\u5236\uFF0C\u5730\u9053\u5DDD\u6E1D\u9EBB\u8FA3\u53E3\u5473\uFF0C\u8FD1\u671F\u597D\u8BC4\u7387\u9AD8",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u670B\u53CB\u5C0F\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u670B\u53CB\u5C0F\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_048", "poi_049"],
+        replaceableBy: [
+          "poi_048",
+          "poi_049"
+        ],
         priorityScore: 82
       },
       {
@@ -2037,25 +2948,44 @@ var init_pois = __esm({
         subType: "\u706B\u9505",
         address: "\u7F57\u6E56\u533A\u7231\u56FD\u8DEF3058-1\u53F7",
         area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u7231\u56FD\u8DEF\u5546\u5708",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
         price: 100,
         priceLevel: "price_le_100",
         meituanRating: 4.6,
         reviewCount: 52574,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB"
+        ],
         stayMinutes: 90,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_048",
         reason: "\u4E3B\u6253\u4E13\u5229\u8106\u8089\u9CA9\uFF0C\u9C7C\u8089\u8106\u723DQ\u5F39\uFF0C\u662F\u7F57\u6E56\u8857\u574A\u591A\u5E74\u7684\u5473\u89C9\u8BB0\u5FC6",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5BB6\u5EAD\u805A\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5BB6\u5EAD\u805A\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_047", "poi_050"],
+        replaceableBy: [
+          "poi_047",
+          "poi_050"
+        ],
         priorityScore: 83
       },
       {
@@ -2065,25 +2995,46 @@ var init_pois = __esm({
         subType: "\u706B\u9505",
         address: "\u5357\u5C71\u533A\u5357\u5934\u8857307\u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u5357\u5934\u53E4\u57CE\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 100,
         priceLevel: "price_le_100",
         meituanRating: 3.9,
         reviewCount: 536,
-        tags: ["\u7F8E\u98DF", "\u6027\u4EF7\u6BD4"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u60C5\u4FA3", "\u540C\u4E8B"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u6027\u4EF7\u6BD4"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 90,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_049",
         reason: "\u725B\u8089\u8D28\u91CF\u5F88\u9AD8\uFF0C\u725B\u8089\u5F88\u5AE9\u5F88\u9C9C\uFF0C\u6027\u4EF7\u6BD4\u5F88\u9AD8",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u670B\u53CB\u5C0F\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u670B\u53CB\u5C0F\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_048", "poi_051"],
+        replaceableBy: [
+          "poi_048",
+          "poi_051"
+        ],
         priorityScore: 80
       },
       {
@@ -2093,25 +3044,44 @@ var init_pois = __esm({
         subType: "\u897F\u9910",
         address: "\u798F\u7530\u533A\u798F\u4E2D\u4E00\u8DEF\u6DF1\u5733\u4E66\u57CE\u4E2D\u5FC3\u57CE\u5317\u533A\u4E8C\u697CN229-2",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u4E66\u57CE\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 130,
         priceLevel: "price_le_150",
         meituanRating: 4.8,
         reviewCount: 11536,
-        tags: ["\u7F8E\u98DF", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 80,
         openTime: "11:00-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_050",
         reason: "\u83DC\u54C1\u5473\u9053\u5F88\u597D\uFF0C\u6C99\u62C9\u5F88\u6E05\u723D\uFF0C\u6C64\u4E5F\u5F88\u597D\u559D\uFF0C\u9002\u5408\u7EA6\u4F1A\u805A\u9910",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_046", "poi_049"],
+        replaceableBy: [
+          "poi_046",
+          "poi_049"
+        ],
         priorityScore: 84
       },
       {
@@ -2121,25 +3091,44 @@ var init_pois = __esm({
         subType: "\u6CF0\u56FD\u8336",
         address: "\u798F\u7530\u533A\u798F\u7530\u8857\u9053\u5353\u60A6\u4E2D\u5FC3\u4E1C\u533A\u8D1F1\u5C42185\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 25,
         priceLevel: "price_le_50",
         meituanRating: 4.5,
         reviewCount: 1857,
-        tags: ["\u7F8E\u98DF"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u4EB2\u5B50"],
+        tags: [
+          "\u7F8E\u98DF"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 10,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_068",
         reason: "\u8336\u5E95\u5F88\u7279\u522B\uFF0C\u6CF0\u56FD\u5976\u8336\u5473\u5F88\u6D53\u70C8\uFF0C\u9002\u5408\u65E5\u5E38\u6253\u5361\u548C\u670B\u53CB\u5C0F\u805A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u901B\u8857\u8865\u7ED9\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u901B\u8857\u8865\u7ED9\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_069", "poi_070"],
+        replaceableBy: [
+          "poi_069",
+          "poi_070"
+        ],
         priorityScore: 77
       },
       {
@@ -2149,25 +3138,46 @@ var init_pois = __esm({
         subType: "\u5976\u8336",
         address: "\u5357\u5C71\u533A\u6EE8\u6D77\u5927\u90532008\u53F7\u6B22\u4E50\u6D77\u5CB8\u66F2\u6C34\u6E7E",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 35,
         priceLevel: "price_le_50",
         meituanRating: 4.8,
         reviewCount: 11698,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1"],
-        limits: ["\u5BA4\u5185", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 10,
         openTime: "11:00-22:30",
         queueLevel: "high",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_069",
         reason: "\u86CB\u7CD5\u79CD\u7C7B\u5F88\u5168\uFF0C\u8FD8\u6709\u5356gelato\uFF0C\u5B9E\u60E0\uFF0C\u9002\u5408\u4E0B\u5348\u8336\u548C\u670B\u53CB\u805A\u4F1A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_068", "poi_071"],
+        replaceableBy: [
+          "poi_068",
+          "poi_071"
+        ],
         priorityScore: 81
       },
       {
@@ -2177,166 +3187,46 @@ var init_pois = __esm({
         subType: "\u5976\u8336",
         address: "\u798F\u7530\u533A\u5353\u60A6\u4E2D\u5FC3\u5317\u533A\u8D1F1\u5C42NB122\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 20,
         priceLevel: "price_le_50",
         meituanRating: 4.5,
         reviewCount: 405,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 10,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_070",
         reason: "\u8336\u5E95\u5F88\u6D53\u70C8\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u65E5\u5E38\u6253\u5361",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u901B\u8857\u8865\u7ED9\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u901B\u8857\u8865\u7ED9\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_069", "poi_072"],
+        replaceableBy: [
+          "poi_069",
+          "poi_072"
+        ],
         priorityScore: 76
-      },
-      {
-        id: "poi_071",
-        name: "\u672C\u7121\u5496\u5561\xB7BeanWood Coffee",
-        type: "\u8F7B\u98DF\u751C\u996E",
-        subType: "\u5976\u8336",
-        address: "\u7F57\u6E56\u533A\u5317\u6597\u8DEF\u6587\u534E\u82B1\u56ED6\u680B1\u697C\u95E8\u9762",
-        area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u5546\u5708/\u8857\u533A",
-        price: 30,
-        priceLevel: "price_le_50",
-        meituanRating: 4.9,
-        reviewCount: 329,
-        tags: ["\u5496\u5561", "\u62CD\u7167"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u540C\u4E8B"],
-        stayMinutes: 10,
-        openTime: "08:00-19:00",
-        queueLevel: "low",
-        distanceLevel: "3-10km",
-        mockMeituanUrl: "mock://meituan/poi_071",
-        reason: "\u670D\u52A1\u5F88\u4EB2\u5207\u70ED\u60C5\uFF0C\u8212\u9002\u7684\u73AF\u5883\uFF0C\u9002\u5408\u6587\u827A\u6253\u5361\u548C\u670B\u53CB\u5C0F\u805A",
-        blindBoxThemes: ["\u6587\u827A\u6C1B\u56F4\u76D2", "\u7F8E\u98DF\u6253\u5361\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
-        bookingRequired: false,
-        weatherSensitive: false,
-        replaceableBy: ["poi_070", "poi_073"],
-        priorityScore: 80
-      },
-      {
-        id: "poi_072",
-        name: "\u5927\u826F\u9673\u8A18\u8001\u94FA\xB7\u987A\u5FB7\u53CC\u76AE\u5976",
-        type: "\u8F7B\u98DF\u751C\u996E",
-        subType: "\u7CA4\u83DC",
-        address: "\u798F\u7530\u533A\u6C99\u5934\u8857\u9053\u6C99\u5C3E\u793E\u533A\u6C99\u5C3E\u4E1C\u675144-1\u53F7",
-        area: "\u798F\u7530\u533A",
-        businessDistrict: "\u6C99\u5C3E\u5546\u5708",
-        price: 25,
-        priceLevel: "price_le_50",
-        meituanRating: 4.7,
-        reviewCount: 381,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
-        stayMinutes: 20,
-        openTime: "10:00-04:00",
-        queueLevel: "medium",
-        distanceLevel: "3-10km",
-        mockMeituanUrl: "mock://meituan/poi_072",
-        reason: "\u4E3B\u6253\u987A\u5FB7\u53CC\u76AE\u5976\u548C\u59DC\u649E\u5976\uFF0C\u5976\u9999\u6D53\u90C1\uFF0C\u53E3\u611F\u987A\u6ED1\uFF0C\u9002\u5408\u591C\u5BB5\u548C\u4E0B\u5348\u8336",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
-        bookingRequired: false,
-        weatherSensitive: false,
-        replaceableBy: ["poi_073", "poi_074"],
-        priorityScore: 78
-      },
-      {
-        id: "poi_073",
-        name: "Shiftin' \u6D6E\u8D77\u5496\u5561\uFF08\u897F\u4E3D\u5E97\uFF09",
-        type: "\u8F7B\u98DF\u751C\u996E",
-        subType: "\u5496\u5561",
-        address: "\u5357\u5C71\u533A\u5E73\u5C71\u4E00\u8DEF23\u53F7\uFF08\u534E\u91CC\u91CC\u5BD3\u65C1\uFF09",
-        area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u5546\u5708/\u8857\u533A",
-        price: 28,
-        priceLevel: "price_le_50",
-        meituanRating: 4.8,
-        reviewCount: 393,
-        tags: ["\u5496\u5561"],
-        limits: ["\u5BA4\u5185", "\u9884\u7B97\u53CB\u597D"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
-        stayMinutes: 20,
-        openTime: "11:00-24:00",
-        queueLevel: "medium",
-        distanceLevel: "3-10km",
-        mockMeituanUrl: "mock://meituan/poi_073",
-        reason: "\u6E29\u99A8\u7684\u5C0F\u5E97\uFF0C\u8425\u4E1A\u65F6\u95F4\u957F\uFF0C\u9002\u5408\u6DF1\u591C\u653E\u677E\u548C\u670B\u53CB\u5C0F\u805A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u6DF1\u591C\u653E\u677E\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
-        bookingRequired: false,
-        weatherSensitive: false,
-        replaceableBy: ["poi_072", "poi_075"],
-        priorityScore: 79
-      },
-      {
-        id: "poi_074",
-        name: "\u59DC\u5927\u529B",
-        type: "\u8F7B\u98DF\u751C\u996E",
-        subType: "\u5976\u8336",
-        address: "\u7F57\u6E56\u533A\u4E1C\u6653\u8857\u9053\u5929\u6CB3\u57CE\u8D2D\u7269\u4E2D\u5FC3\u7CA4\u6D77\u57CE\u5E97",
-        area: "\u7F57\u6E56\u533A",
-        businessDistrict: "\u7F57\u6E56\u5929\u6CB3\u57CE\u5546\u5708",
-        price: 18,
-        priceLevel: "price_le_50",
-        meituanRating: 4.5,
-        reviewCount: 405,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
-        stayMinutes: 10,
-        openTime: "10:00-22:00",
-        queueLevel: "low",
-        distanceLevel: "3-10km",
-        mockMeituanUrl: "mock://meituan/poi_074",
-        reason: "\u4E3B\u6253\u517B\u751F\u8336\uFF0C\u53E3\u5473\u6E05\u65B0\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u65E5\u5E38\u6253\u5361",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u517B\u751F\u8F7B\u996E\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
-        bookingRequired: false,
-        weatherSensitive: false,
-        replaceableBy: ["poi_075", "poi_076"],
-        priorityScore: 76
-      },
-      {
-        id: "poi_075",
-        name: "Yee3\xB7\u4E09\u53F7\u6930\xB7\u6930\u5B50\u7092\u51B0\uFF08\u6DF1\u5733\u5927\u60A6\u57CE\u5E97\uFF09",
-        type: "\u8F7B\u98DF\u751C\u996E",
-        subType: "\u6930\u5B50\u7092\u51B0",
-        address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u5B9D\u6C11\u793E\u533A25\u533A\u521B\u4E1A\u4E8C\u8DEF61\u53F7",
-        area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6DF1\u5733\u5927\u60A6\u57CE\u5546\u5708",
-        price: 22,
-        priceLevel: "price_le_50",
-        meituanRating: 4.5,
-        reviewCount: 405,
-        tags: ["\u7F8E\u98DF", "\u751C\u54C1"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
-        stayMinutes: 20,
-        openTime: "10:00-22:00",
-        queueLevel: "low",
-        distanceLevel: "3-10km",
-        mockMeituanUrl: "mock://meituan/poi_075",
-        reason: "\u989C\u503C\u5728\u7EBF\uFF0C\u51B0\u6C99\u7EC6\u817B\uFF0C\u6851\u845A\u5473\u5F88\u6B63\uFF0C\u4E0D\u9F41\u751C\uFF0C\u9002\u5408\u590F\u5929\u6253\u5361",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u590F\u65E5\u6E05\u723D\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
-        bookingRequired: false,
-        weatherSensitive: false,
-        replaceableBy: ["poi_074", "poi_073"],
-        priorityScore: 77
       },
       {
         id: "poi_051",
@@ -2345,25 +3235,46 @@ var init_pois = __esm({
         subType: "\u996E\u54C1/\u5496\u5561\u9986",
         address: "\u5B9D\u5B89\u533A\u897F\u4E61\u8857\u9053\u6843\u6E90\u5C4511\u533A1-6\u680B",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u897F\u4E61\u6843\u6E90\u5C45",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 15,
         priceLevel: "price_le_50",
         meituanRating: 4.6,
         reviewCount: 116,
-        tags: ["\u996E\u54C1", "\u9AD8\u6027\u4EF7\u6BD4", "\u9C9C\u679C\u9178\u5976"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u996E\u54C1",
+          "\u9AD8\u6027\u4EF7\u6BD4",
+          "\u9C9C\u679C\u9178\u5976"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_051",
         reason: "\u4E3B\u6253\u9ED1\u829D\u9EBB\u767D\u7CEF\u7C73\u3001\u9EC4\u76AE\u6843\u9178\u5976\u7B49\u7279\u8272\u996E\u54C1\uFF0C\u53E3\u5473\u6E05\u65B0\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u65E5\u5E38\u4E0B\u5348\u8336",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u4F11\u95F2\u5C0F\u61A9\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u4F11\u95F2\u5C0F\u61A9\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_052", "poi_053"],
+        replaceableBy: [
+          "poi_052",
+          "poi_053"
+        ],
         priorityScore: 78
       },
       {
@@ -2373,25 +3284,47 @@ var init_pois = __esm({
         subType: "\u996E\u54C1/\u5496\u5561\u9986",
         address: "\u5B9D\u5B89\u533A\u6000\u5FB7\u4E07\u8C61\u6C47A\u99863\u697CAL333\u53F7",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6000\u5FB7\u4E07\u8C61\u6C47",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 20,
         priceLevel: "price_le_50",
         meituanRating: 4.7,
         reviewCount: 1174,
-        tags: ["\u996E\u54C1", "\u9AD8\u6027\u4EF7\u6BD4", "\u53F0\u5F0F\u5976\u8336"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u996E\u54C1",
+          "\u9AD8\u6027\u4EF7\u6BD4",
+          "\u53F0\u5F0F\u5976\u8336"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "10:00-22:30",
         queueLevel: "low",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_052",
         reason: "\u4E3B\u6253\u53F0\u5357\u98CE\u5473\u73CD\u73E0\u5976\u8336\uFF0C\u73CD\u73E0Q\u5F39\u6709\u56BC\u52B2\uFF0C\u8FD8\u6709\u7279\u8272\u86CB\u631E\u7B49\u5C0F\u98DF\uFF0C\u56DE\u5934\u5BA2\u591A\uFF0C\u54C1\u8D28\u7A33\u5B9A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u901B\u8857\u6B47\u811A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u901B\u8857\u6B47\u811A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_051", "poi_054"],
+        replaceableBy: [
+          "poi_051",
+          "poi_054"
+        ],
         priorityScore: 79
       },
       {
@@ -2401,25 +3334,48 @@ var init_pois = __esm({
         subType: "\u751C\u54C1/\u996E\u54C1\u5E97",
         address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u5B9D\u6C11\u793E\u533A25\u533A\u521B\u4E1A\u4E8C\u8DEF61\u53F7\u5927\u60A6\u57CE\u5546\u573A",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u5927\u60A6\u57CE",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 24,
         priceLevel: "price_le_50",
         meituanRating: 4.6,
         reviewCount: 3017,
-        tags: ["\u751C\u54C1", "\u996E\u54C1", "\u9AD8\u6027\u4EF7\u6BD4", "\u9C9C\u679C\u679C\u6C41"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u751C\u54C1",
+          "\u996E\u54C1",
+          "\u9AD8\u6027\u4EF7\u6BD4",
+          "\u9C9C\u679C\u679C\u6C41"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 40,
         openTime: "10:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_053",
         reason: "\u4E3B\u6253\u5C71\u91CE\u679C\u6C41\u7CFB\u5217\u548C\u6843\u80F6\u83B2\u5B50\u751C\u6C64\u7B49\u7279\u8272\u751C\u54C1\uFF0C\u9C9C\u679C\u98CE\u5473\u6E05\u65B0\uFF0C\u56DE\u5934\u5BA2\u591A\uFF0C\u9002\u5408\u65E5\u5E38\u6253\u5361",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_052", "poi_055"],
+        replaceableBy: [
+          "poi_052",
+          "poi_055"
+        ],
         priorityScore: 78
       },
       {
@@ -2429,25 +3385,50 @@ var init_pois = __esm({
         subType: "\u7CA4\u83DC/\u6D77\u9C9C\u5927\u6392\u6863",
         address: "\u5B9D\u5B89\u533A\u6D77\u79C0\u8DEF19\u53F7\u56FD\u9645\u897F\u5CB8\u5546\u52A1\u5927\u53A6101",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u533A",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 97,
         priceLevel: "price_le_100",
         meituanRating: 4.5,
         reviewCount: 7183,
-        tags: ["\u7CA4\u83DC", "\u6D77\u9C9C", "\u8001\u5B57\u53F7", "\u672C\u5730\u7279\u8272"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B", "\u60C5\u4FA3"],
+        tags: [
+          "\u7CA4\u83DC",
+          "\u6D77\u9C9C",
+          "\u8001\u5B57\u53F7",
+          "\u672C\u5730\u7279\u8272"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "11:00-14:00, 17:00-00:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_054",
         reason: "\u672C\u5730\u7ECF\u8425\u591A\u5E74\u7684\u7CA4\u83DC\u8001\u5E97\uFF0C\u4E3B\u6253\u91D1\u724C\u8C49\u6CB9\u7687\u867E\u7B49\u6DF1\u5733\u98CE\u5473\u6D77\u9C9C\uFF0C\u70ED\u83DC\u73B0\u7092\u73B0\u5236\uFF0C\u53E3\u5473\u5730\u9053",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5BB6\u5EAD\u805A\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5BB6\u5EAD\u805A\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_055", "poi_056"],
+        replaceableBy: [
+          "poi_055",
+          "poi_056"
+        ],
         priorityScore: 83
       },
       {
@@ -2457,25 +3438,48 @@ var init_pois = __esm({
         subType: "\u4E1C\u5357\u4E9A\u83DC/\u6CF0\u56FD\u6599\u7406",
         address: "\u5B9D\u5B89\u533A\u677E\u6D9B\u793E\u533A\u4E1C\u65B0\u885729\u53F7101\u53F7",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u677E\u5C97\u7247\u533A",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 44,
         priceLevel: "price_le_50",
         meituanRating: 4.7,
         reviewCount: 3839,
-        tags: ["\u4E1C\u5357\u4E9A\u83DC", "\u6CF0\u56FD\u6599\u7406", "\u9AD8\u6027\u4EF7\u6BD4", "\u597D\u8BC4\u699C\u63A8\u8350"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3", "\u4EB2\u5B50"],
+        tags: [
+          "\u4E1C\u5357\u4E9A\u83DC",
+          "\u6CF0\u56FD\u6599\u7406",
+          "\u9AD8\u6027\u4EF7\u6BD4",
+          "\u597D\u8BC4\u699C\u63A8\u8350"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 90,
         openTime: "10:30-14:00, 16:00-22:00",
         queueLevel: "medium",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_055",
         reason: "\u5B9D\u5B89\u533A\u4E1C\u5357\u4E9A\u83DC\u597D\u8BC4\u699C\u7B2C3\u540D\uFF0C\u8FD1\u671F\u597D\u8BC4\u7387\u9AD8\uFF0C\u4E3B\u6253\u5730\u9053\u6CF0\u56FD\u98CE\u5473\u83DC\u54C1\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u591A\u4EBA\u805A\u9910",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_054", "poi_057"],
+        replaceableBy: [
+          "poi_054",
+          "poi_057"
+        ],
         priorityScore: 82
       },
       {
@@ -2485,25 +3489,49 @@ var init_pois = __esm({
         subType: "\u70E7\u70E4/\u70E4\u9C7C",
         address: "\u5B9D\u5B89\u533A\u6C99\u6D66\u827A\u5C55\u56DB\u8DEF6\u53F7\u827A\u672F\u5C0F\u95471\u53F7\u697CT1-020\u5BA4",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u677E\u5C97\u7247\u533A",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 56,
         priceLevel: "price_50_100",
         meituanRating: 4.6,
         reviewCount: 3589,
-        tags: ["\u70E7\u70E4", "\u70E4\u9C7C", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u8FDE\u9501\u54C1\u724C"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C"],
-        fitPeople: ["\u670B\u53CB", "\u540C\u4E8B", "\u4EB2\u5B50"],
+        tags: [
+          "\u70E7\u70E4",
+          "\u70E4\u9C7C",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u8FDE\u9501\u54C1\u724C"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u540C\u4E8B",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 120,
         openTime: "17:00-03:00",
         queueLevel: "medium",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_056",
         reason: "\u677E\u5C97\u70E7\u70E4\u4EBA\u6C14\u699C\u7B2C1\u540D\uFF0C\u4E3B\u6253\u79E6\u5DDD\u9EC4\u725B\u8089\u70E7\u70E4\u4E0E\u8106\u76AE\u70E4\u9C7C\uFF0C\u9C9C\u8D27\u73B0\u70E4\uFF0C\u9002\u5408\u591C\u5BB5\u805A\u4F1A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_055", "poi_058"],
+        replaceableBy: [
+          "poi_055",
+          "poi_058"
+        ],
         priorityScore: 81
       },
       {
@@ -2513,25 +3541,48 @@ var init_pois = __esm({
         subType: "\u5DDD\u6E58\u83DC",
         address: "\u5B9D\u5B89\u533A\u6C99\u4E95\u8DEF613\u53F7\uFF08\u5927\u6DA6\u79D1\u6280\u5927\u53A6\u4E00\u697C\u5E97\u94FA\uFF09",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6C99\u4E95\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 60,
         priceLevel: "price_50_100",
         meituanRating: 5,
         reviewCount: 2618,
-        tags: ["\u5DDD\u6E58\u83DC", "\u8FDE\u9501\u54C1\u724C", "\u597D\u8BC4\u699C\u63A8\u8350"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u5DDD\u6E58\u83DC",
+          "\u8FDE\u9501\u54C1\u724C",
+          "\u597D\u8BC4\u699C\u63A8\u8350"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 120,
         openTime: "11:00-14:00, 17:00-21:00",
         queueLevel: "low",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_057",
         reason: "\u6C99\u4E95\u5546\u5708\u5DDD\u6E58\u83DC\u597D\u8BC4\u699C\u7B2C4\u540D\uFF0C\u4E3B\u6253\u6E56\u5357\u975E\u9057\u9EC4\u7116\u5927\u5934\u9C7C\u7B49\u67F4\u706B\u98CE\u5473\u83DC\u54C1\uFF0C\u53E3\u5473\u5730\u9053\uFF0C\u56DE\u5934\u5BA2\u591A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u56E2\u5EFA\u6B22\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u56E2\u5EFA\u6B22\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_056", "poi_059"],
+        replaceableBy: [
+          "poi_056",
+          "poi_059"
+        ],
         priorityScore: 84
       },
       {
@@ -2541,25 +3592,49 @@ var init_pois = __esm({
         subType: "\u897F\u9910/\u5496\u5561\u9986",
         address: "\u5B9D\u5B89\u533A\u827A\u5C55\u4E09\u8DEF\u6EE1\u4EAC\u534E\xB7\u6EE1\u7EB7\u5929\u5730\u8857\u533A\u6EE1\u7EB7\u6C471\u697CT1-1",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u677E\u5C97\u6EE1\u4EAC\u534E\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 100,
         priceLevel: "price_le_100",
         meituanRating: 4.6,
         reviewCount: 3294,
-        tags: ["\u897F\u9910", "\u5496\u5561\u9986", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u6D6A\u6F2B\u7EA6\u4F1A"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C"],
-        fitPeople: ["\u60C5\u4FA3", "\u670B\u53CB", "\u5355\u4EBA"],
+        tags: [
+          "\u897F\u9910",
+          "\u5496\u5561\u9986",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u6D6A\u6F2B\u7EA6\u4F1A"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u60C5\u4FA3",
+          "\u670B\u53CB",
+          "\u5355\u4EBA"
+        ],
         stayMinutes: 120,
         openTime: "10:00-23:00",
         queueLevel: "medium",
         distanceLevel: "10km\u4EE5\u4E0A",
         mockMeituanUrl: "mock://meituan/poi_058",
         reason: "\u677E\u5C97\u5496\u5561\u4EBA\u6C14\u699C\u7B2C4\u540D\uFF0C\u8FD1\u671F\u597D\u8BC4\u7387\u9AD8\uFF0C\u4E3B\u6253\u725B\u6392\u897F\u9910\u4E0E\u4E0B\u5348\u8336\uFF0C\u9002\u5408\u6D6A\u6F2B\u7EA6\u4F1A\u548C\u670B\u53CB\u805A\u4F1A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_057", "poi_060"],
+        replaceableBy: [
+          "poi_057",
+          "poi_060"
+        ],
         priorityScore: 83
       },
       {
@@ -2569,25 +3644,50 @@ var init_pois = __esm({
         subType: "\u706B\u9505/\u83CC\u83C7\u706B\u9505",
         address: "\u5B9D\u5B89\u533A\u6B22\u4E50\u6E2F\u6E7E\u4E1C\u5CB83\u697CL3-004\u5BA4",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u533A/\u6B22\u4E50\u6E2F\u6E7E",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 105,
         priceLevel: "price_100_plus",
         meituanRating: 4.6,
         reviewCount: 7858,
-        tags: ["\u706B\u9505", "\u83CC\u83C7\u706B\u9505", "\u8FDE\u9501\u54C1\u724C", "\u597D\u8BC4\u699C\u63A8\u8350"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385", "\u6709\u5927\u684C"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B", "\u60C5\u4FA3"],
+        tags: [
+          "\u706B\u9505",
+          "\u83CC\u83C7\u706B\u9505",
+          "\u8FDE\u9501\u54C1\u724C",
+          "\u597D\u8BC4\u699C\u63A8\u8350"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 120,
         openTime: "11:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_059",
         reason: "\u5B9D\u5B89\u4E2D\u5FC3\u533A\u706B\u9505\u597D\u8BC4\u699C\u7B2C5\u540D\uFF0C\u4E3B\u6253\u4E91\u5357\u5C71\u73CD\u83CC\u83C7\u706B\u9505\uFF0C\u53EF\u8FB9\u5403\u8FB9\u8D4F\u6469\u5929\u8F6E\u591C\u666F\uFF0C\u56DE\u5934\u5BA2\u4F17\u591A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u591C\u666F\u4F11\u95F2\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u666F\u4F11\u95F2\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_058", "poi_061"],
+        replaceableBy: [
+          "poi_058",
+          "poi_061"
+        ],
         priorityScore: 85
       },
       {
@@ -2597,25 +3697,48 @@ var init_pois = __esm({
         subType: "\u4E1C\u5357\u4E9A\u83DC/\u8D8A\u5357\u6599\u7406",
         address: "\u5B9D\u5B89\u533A\u6D77\u5E9C\u8DEF\u6B22\u4E50\u6E2F\u6E7E\u4E1C\u5CB8\u5317\u533AB1\u5C42044\u53F7",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u533A/\u6B22\u4E50\u6E2F\u6E7E",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 68,
         priceLevel: "price_50_100",
         meituanRating: 4.5,
         reviewCount: 3736,
-        tags: ["\u4E1C\u5357\u4E9A\u83DC", "\u8D8A\u5357\u6599\u7406", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u8001\u5B57\u53F7\u54C1\u724C"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3", "\u4EB2\u5B50"],
+        tags: [
+          "\u4E1C\u5357\u4E9A\u83DC",
+          "\u8D8A\u5357\u6599\u7406",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u8001\u5B57\u53F7\u54C1\u724C"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 90,
         openTime: "10:30-21:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_060",
         reason: "\u5B9D\u5B89\u533A\u4E1C\u5357\u4E9A\u83DC\u4EBA\u6C14\u699C\u7B2C8\u540D\uFF0C\u662F\u5F00\u4E1A\u591A\u5E74\u7684\u5730\u9053\u8D8A\u5357\u98CE\u5473\u54C1\u724C\uFF0C\u4E3B\u6253\u8D8A\u5357\u7279\u8272\u83DC\u54C1\uFF0C\u6027\u4EF7\u6BD4\u9AD8",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5F02\u57DF\u98CE\u5473\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5F02\u57DF\u98CE\u5473\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_059", "poi_062"],
+        replaceableBy: [
+          "poi_059",
+          "poi_062"
+        ],
         priorityScore: 80
       },
       {
@@ -2625,25 +3748,47 @@ var init_pois = __esm({
         subType: "\u8336\u9910\u5385/\u6E2F\u5F0F\u98CE\u5473",
         address: "\u5B9D\u5B89\u533A\u91D1\u79D1\u8DEF\u534E\u4FA8\u57CE\u6B22\u4E50\u6E2F\u6E7E\u897F\u5CB8\u7C73\u57CE\u5E02\u65B0\u5929\u5730L1-012",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u533A/\u6B22\u4E50\u6E2F\u6E7E",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 48,
         priceLevel: "price_le_50",
         meituanRating: 4.6,
         reviewCount: 1930,
-        tags: ["\u8336\u9910\u5385", "\u6E2F\u5F0F\u98CE\u5473", "\u9AD8\u6027\u4EF7\u6BD4"],
-        limits: ["\u5BA4\u5185", "\u6709\u5927\u684C"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u4EB2\u5B50"],
+        tags: [
+          "\u8336\u9910\u5385",
+          "\u6E2F\u5F0F\u98CE\u5473",
+          "\u9AD8\u6027\u4EF7\u6BD4"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 60,
         openTime: "10:30-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_061",
         reason: "\u4E3B\u6253\u6E2F\u5F0F\u725B\u8169\u725B\u6742\u7172\u4E0E\u62DB\u724C\u8C46\u82B1\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u65E5\u5E38\u7528\u9910\u548C\u670B\u53CB\u5C0F\u805A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u7B80\u9910\u9971\u8179\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u7B80\u9910\u9971\u8179\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_060", "poi_063"],
+        replaceableBy: [
+          "poi_060",
+          "poi_063"
+        ],
         priorityScore: 79
       },
       {
@@ -2653,25 +3798,47 @@ var init_pois = __esm({
         subType: "\u996E\u54C1/\u679C\u8336\u5E97",
         address: "\u5B9D\u5B89\u533A\u5EFA\u5B89\u4E00\u8DEF99\u53F7\u6D77\u96C5\u7F24\u7EB7\u57CE\u8D2D\u7269\u4E2D\u5FC3\u8D1F1\u5C42B163",
         area: "\u5B9D\u5B89\u533A",
-        businessDistrict: "\u6D77\u96C5\u7F24\u7EB7\u57CE\u5546\u5708",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
         price: 23,
         priceLevel: "price_le_50",
         meituanRating: 4.3,
         reviewCount: 20666,
-        tags: ["\u996E\u54C1", "\u679C\u8336", "\u8FDE\u9501\u54C1\u724C", "\u6DF1\u5733\u672C\u571F\u4EE3\u8868"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u996E\u54C1",
+          "\u679C\u8336",
+          "\u8FDE\u9501\u54C1\u724C",
+          "\u6DF1\u5733\u672C\u571F\u4EE3\u8868"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 30,
         openTime: "10:00-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_062",
         reason: "\u6DF1\u5733\u672C\u571F\u679C\u8336\u4EE3\u8868\u54C1\u724C\uFF0C\u4E3B\u6253\u62DB\u724C\u65B9\u676F\u6C34\u679C\u8336\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u662F\u5F00\u4E1A\u591A\u5E74\u7684\u8FDE\u9501\u8001\u5E97",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u901B\u8857\u8865\u7ED9\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u901B\u8857\u8865\u7ED9\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_061", "poi_064"],
+        replaceableBy: [
+          "poi_061",
+          "poi_064"
+        ],
         priorityScore: 77
       },
       {
@@ -2681,25 +3848,49 @@ var init_pois = __esm({
         subType: "\u706B\u9505/\u84B8\u6C7D\u77F3\u9505\u9C7C",
         address: "\u5357\u5C71\u533A\u6EE8\u6D77\u5927\u90532008\u53F7\u6B22\u4E50\u6D77\u5CB8\u66F2\u6C34\u6E7E2\u680B\u8D1F1\u697CH\u53F7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 102,
         priceLevel: "price_100_plus",
         meituanRating: 4.5,
         reviewCount: 10864,
-        tags: ["\u706B\u9505", "\u84B8\u6C7D\u77F3\u9505\u9C7C", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u4E91\u5357\u98CE\u5473"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385", "\u6709\u5305\u95F4"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u540C\u4E8B"],
+        tags: [
+          "\u706B\u9505",
+          "\u84B8\u6C7D\u77F3\u9505\u9C7C",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u4E91\u5357\u98CE\u5473"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385",
+          "\u6709\u5305\u95F4"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
         stayMinutes: 120,
         openTime: "11:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_063",
         reason: "\u6B22\u4E50\u6D77\u5CB8\u7F8E\u98DF\u4EBA\u6C14\u699C\u7B2C3\u540D\uFF0C\u4E3B\u6253\u4E91\u5357\u98CE\u5473\u84B8\u6C7D\u77F3\u9505\u9C7C\uFF0C\u98DF\u6750\u65B0\u9C9C\uFF0C\u7528\u9910\u73AF\u5883\u8212\u9002",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5BB6\u5EAD\u805A\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5BB6\u5EAD\u805A\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_064", "poi_065"],
+        replaceableBy: [
+          "poi_064",
+          "poi_065"
+        ],
         priorityScore: 82
       },
       {
@@ -2709,25 +3900,49 @@ var init_pois = __esm({
         subType: "\u5496\u5561\u9986/\u827A\u672F\u4E0B\u5348\u8336",
         address: "\u5357\u5C71\u533A\u767D\u77F3\u8DEF\u6B22\u4E50\u6D77\u5CB8\u5730\u666F\u5761\u8343\u56ED\u827A\u672F\u7A7A\u95F4",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 109,
         priceLevel: "price_100_plus",
         meituanRating: 5,
         reviewCount: 2223,
-        tags: ["\u5496\u5561\u9986", "\u827A\u672F\u4E0B\u5348\u8336", "\u7279\u8272\u4F53\u9A8C", "\u9AD8\u8BC4\u5206"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385", "\u6709\u5927\u684C"],
-        fitPeople: ["\u60C5\u4FA3", "\u670B\u53CB", "\u5355\u4EBA"],
+        tags: [
+          "\u5496\u5561\u9986",
+          "\u827A\u672F\u4E0B\u5348\u8336",
+          "\u7279\u8272\u4F53\u9A8C",
+          "\u9AD8\u8BC4\u5206"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u60C5\u4FA3",
+          "\u670B\u53CB",
+          "\u5355\u4EBA"
+        ],
         stayMinutes: 120,
         openTime: "10:30-18:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_064",
         reason: "\u9AD8\u8BC4\u5206\u827A\u672F\u4E3B\u9898\u4E0B\u5348\u8336\uFF0C\u63D0\u4F9B\u7279\u8272\u4E3B\u9898\u5957\u9910\uFF0C\u73AF\u5883\u96C5\u81F4\uFF0C\u9002\u5408\u6587\u827A\u6253\u5361\u548C\u4F11\u95F2\u7EA6\u4F1A",
-        blindBoxThemes: ["\u6587\u827A\u6C1B\u56F4\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u6587\u827A\u6C1B\u56F4\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_063", "poi_066"],
+        replaceableBy: [
+          "poi_063",
+          "poi_066"
+        ],
         priorityScore: 86
       },
       {
@@ -2737,25 +3952,48 @@ var init_pois = __esm({
         subType: "\u5496\u5561\u9986/\u4F11\u95F2\u4F53\u9A8C",
         address: "\u5357\u5C71\u533A\u767D\u77F3\u8DEF2033\u53F7\u6B22\u4E50\u6D77\u5CB8\u8D2D\u7269\u4E2D\u5FC3L1-049/050",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 48,
         priceLevel: "price_le_50",
         meituanRating: 4.7,
         reviewCount: 381,
-        tags: ["\u5496\u5561\u9986", "\u62FC\u56FE\u4F53\u9A8C", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u4F11\u95F2\u5A31\u4E50"],
-        limits: ["\u5BA4\u5185", "\u6709\u5927\u684C"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3", "\u5355\u4EBA"],
+        tags: [
+          "\u5496\u5561\u9986",
+          "\u62FC\u56FE\u4F53\u9A8C",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u4F11\u95F2\u5A31\u4E50"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u5355\u4EBA"
+        ],
         stayMinutes: 90,
         openTime: "10:00-21:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_065",
         reason: "\u6B22\u4E50\u6D77\u5CB8\u5496\u5561\u4EBA\u6C14\u699C\u7B2C7\u540D\uFF0C\u7ED3\u5408\u5496\u5561\u4E0E\u62FC\u56FE\u4F53\u9A8C\uFF0C\u662F\u7279\u8272\u4F11\u95F2\u573A\u6240\uFF0C\u9002\u5408\u670B\u53CB\u5C0F\u805A",
-        blindBoxThemes: ["\u8DA3\u5473\u4F11\u95F2\u76D2", "\u7F8E\u98DF\u6253\u5361\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u8DA3\u5473\u4F11\u95F2\u76D2",
+          "\u7F8E\u98DF\u6253\u5361\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_064", "poi_067"],
+        replaceableBy: [
+          "poi_064",
+          "poi_067"
+        ],
         priorityScore: 81
       },
       {
@@ -2765,25 +4003,49 @@ var init_pois = __esm({
         subType: "\u7CA4\u83DC/\u6F6E\u6C55\u83DC",
         address: "\u5357\u5C71\u533A\u6D77\u56ED\u4E8C\u8DEF\u6B22\u4E50\u6D77\u5CB8\u66F2\u6C34\u6E7E1\u680BB\u5EA7",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 117,
         priceLevel: "price_100_plus",
         meituanRating: 4.2,
         reviewCount: 5523,
-        tags: ["\u7CA4\u83DC", "\u6F6E\u6C55\u83DC", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u5546\u52A1\u9996\u9009"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C"],
-        fitPeople: ["\u540C\u4E8B", "\u4EB2\u5B50", "\u670B\u53CB"],
+        tags: [
+          "\u7CA4\u83DC",
+          "\u6F6E\u6C55\u83DC",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u5546\u52A1\u9996\u9009"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C"
+        ],
+        fitPeople: [
+          "\u540C\u4E8B",
+          "\u4EB2\u5B50",
+          "\u670B\u53CB"
+        ],
         stayMinutes: 120,
         openTime: "10:00-14:00, 17:00-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_066",
         reason: "\u6B22\u4E50\u6D77\u5CB8\u7CA4\u83DC\u4EBA\u6C14\u699C\u7B2C4\u540D\uFF0C\u662F\u5F00\u4E1A\u591A\u5E74\u7684\u6F6E\u6C55\u8001\u5E97\uFF0C\u4E3B\u6253\u6B63\u5B97\u6F6E\u5DDE\u98CE\u5473\uFF0C\u9002\u5408\u5546\u52A1\u5BB4\u8BF7",
-        blindBoxThemes: ["\u5546\u52A1\u5BB4\u8BF7\u76D2", "\u7F8E\u98DF\u6253\u5361\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5546\u52A1\u5BB4\u8BF7\u76D2",
+          "\u7F8E\u98DF\u6253\u5361\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_065", "poi_068"],
+        replaceableBy: [
+          "poi_065",
+          "poi_068"
+        ],
         priorityScore: 80
       },
       {
@@ -2793,26 +4055,289 @@ var init_pois = __esm({
         subType: "\u4E1C\u5357\u4E9A\u83DC/\u8D8A\u5357\u6599\u7406",
         address: "\u5357\u5C71\u533A\u6EE8\u6D77\u5927\u90532008\u53F7\u6B22\u4E50\u6D77\u5CB8\u66F2\u6C34\u6E7E2\u680B2-\u96441\u8857",
         area: "\u5357\u5C71\u533A",
-        businessDistrict: "\u6B22\u4E50\u6D77\u5CB8\u5546\u5708",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
         price: 100,
         priceLevel: "price_le_100",
         meituanRating: 4.4,
         reviewCount: 5647,
-        tags: ["\u4E1C\u5357\u4E9A\u83DC", "\u8D8A\u5357\u6599\u7406", "\u597D\u8BC4\u699C\u63A8\u8350", "\u6CB3\u666F\u9910\u5385"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u60C5\u4FA3", "\u670B\u53CB", "\u4EB2\u5B50"],
+        tags: [
+          "\u4E1C\u5357\u4E9A\u83DC",
+          "\u8D8A\u5357\u6599\u7406",
+          "\u597D\u8BC4\u699C\u63A8\u8350",
+          "\u6CB3\u666F\u9910\u5385"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u60C5\u4FA3",
+          "\u670B\u53CB",
+          "\u4EB2\u5B50"
+        ],
         stayMinutes: 90,
         openTime: "11:00-21:30",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_067",
         reason: "\u6B22\u4E50\u6D77\u5CB8\u7F8E\u98DF\u597D\u8BC4\u699C\uFF0C\u662F\u53EF\u4E34\u7A97\u89C2\u666F\u7684\u6CB3\u666F\u9910\u5385\uFF0C\u4E3B\u6253\u5730\u9053\u4E1C\u5357\u4E9A\u98CE\u5473\u83DC\u54C1",
-        blindBoxThemes: ["\u5F02\u57DF\u98CE\u5473\u76D2", "\u6CB3\u666F\u7528\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u5F02\u57DF\u98CE\u5473\u76D2",
+          "\u6CB3\u666F\u7528\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_066", "poi_063"],
+        replaceableBy: [
+          "poi_066",
+          "poi_063"
+        ],
         priorityScore: 79
+      },
+      {
+        id: "poi_071",
+        name: "\u672C\u7121\u5496\u5561\xB7BeanWood Coffee",
+        type: "\u8F7B\u98DF\u751C\u996E",
+        subType: "\u5976\u8336",
+        address: "\u7F57\u6E56\u533A\u5317\u6597\u8DEF\u6587\u534E\u82B1\u56ED6\u680B1\u697C\u95E8\u9762",
+        area: "\u7F57\u6E56\u533A",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
+        price: 30,
+        priceLevel: "price_le_50",
+        meituanRating: 4.9,
+        reviewCount: 329,
+        tags: [
+          "\u5496\u5561",
+          "\u62CD\u7167"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
+        stayMinutes: 10,
+        openTime: "08:00-19:00",
+        queueLevel: "low",
+        distanceLevel: "3-10km",
+        mockMeituanUrl: "mock://meituan/poi_071",
+        reason: "\u670D\u52A1\u5F88\u4EB2\u5207\u70ED\u60C5\uFF0C\u8212\u9002\u7684\u73AF\u5883\uFF0C\u9002\u5408\u6587\u827A\u6253\u5361\u548C\u670B\u53CB\u5C0F\u805A",
+        blindBoxThemes: [
+          "\u6587\u827A\u6C1B\u56F4\u76D2",
+          "\u7F8E\u98DF\u6253\u5361\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
+        bookingRequired: false,
+        weatherSensitive: false,
+        replaceableBy: [
+          "poi_070",
+          "poi_073"
+        ],
+        priorityScore: 80
+      },
+      {
+        id: "poi_072",
+        name: "\u5927\u826F\u9673\u8A18\u8001\u94FA\xB7\u987A\u5FB7\u53CC\u76AE\u5976",
+        type: "\u8F7B\u98DF\u751C\u996E",
+        subType: "\u7CA4\u83DC",
+        address: "\u798F\u7530\u533A\u6C99\u5934\u8857\u9053\u6C99\u5C3E\u793E\u533A\u6C99\u5C3E\u4E1C\u675144-1\u53F7",
+        area: "\u798F\u7530\u533A",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
+        price: 25,
+        priceLevel: "price_le_50",
+        meituanRating: 4.7,
+        reviewCount: 381,
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
+        stayMinutes: 20,
+        openTime: "10:00-04:00",
+        queueLevel: "medium",
+        distanceLevel: "3-10km",
+        mockMeituanUrl: "mock://meituan/poi_072",
+        reason: "\u4E3B\u6253\u987A\u5FB7\u53CC\u76AE\u5976\u548C\u59DC\u649E\u5976\uFF0C\u5976\u9999\u6D53\u90C1\uFF0C\u53E3\u611F\u987A\u6ED1\uFF0C\u9002\u5408\u591C\u5BB5\u548C\u4E0B\u5348\u8336",
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u591C\u751F\u6D3B\u6C1B\u56F4\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
+        bookingRequired: false,
+        weatherSensitive: false,
+        replaceableBy: [
+          "poi_073",
+          "poi_074"
+        ],
+        priorityScore: 78
+      },
+      {
+        id: "poi_073",
+        name: "Shiftin' \u6D6E\u8D77\u5496\u5561\uFF08\u897F\u4E3D\u5E97\uFF09",
+        type: "\u8F7B\u98DF\u751C\u996E",
+        subType: "\u5496\u5561",
+        address: "\u5357\u5C71\u533A\u5E73\u5C71\u4E00\u8DEF23\u53F7\uFF08\u534E\u91CC\u91CC\u5BD3\u65C1\uFF09",
+        area: "\u5357\u5C71\u533A",
+        businessDistrict: "\u5357\u5C71\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5357\u5C71\u6587\u827A\u5708",
+        price: 28,
+        priceLevel: "price_le_50",
+        meituanRating: 4.8,
+        reviewCount: 393,
+        tags: [
+          "\u5496\u5561"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u9884\u7B97\u53CB\u597D"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
+        stayMinutes: 20,
+        openTime: "11:00-24:00",
+        queueLevel: "medium",
+        distanceLevel: "3-10km",
+        mockMeituanUrl: "mock://meituan/poi_073",
+        reason: "\u6E29\u99A8\u7684\u5C0F\u5E97\uFF0C\u8425\u4E1A\u65F6\u95F4\u957F\uFF0C\u9002\u5408\u6DF1\u591C\u653E\u677E\u548C\u670B\u53CB\u5C0F\u805A",
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u6DF1\u591C\u653E\u677E\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
+        bookingRequired: false,
+        weatherSensitive: false,
+        replaceableBy: [
+          "poi_072",
+          "poi_075"
+        ],
+        priorityScore: 79
+      },
+      {
+        id: "poi_074",
+        name: "\u59DC\u5927\u529B",
+        type: "\u8F7B\u98DF\u751C\u996E",
+        subType: "\u5976\u8336",
+        address: "\u7F57\u6E56\u533A\u4E1C\u6653\u8857\u9053\u5929\u6CB3\u57CE\u8D2D\u7269\u4E2D\u5FC3\u7CA4\u6D77\u57CE\u5E97",
+        area: "\u7F57\u6E56\u533A",
+        businessDistrict: "\u7F57\u6E56\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u7F57\u6E56\u6162\u901B\u5708",
+        price: 18,
+        priceLevel: "price_le_50",
+        meituanRating: 4.5,
+        reviewCount: 405,
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
+        stayMinutes: 10,
+        openTime: "10:00-22:00",
+        queueLevel: "low",
+        distanceLevel: "3-10km",
+        mockMeituanUrl: "mock://meituan/poi_074",
+        reason: "\u4E3B\u6253\u517B\u751F\u8336\uFF0C\u53E3\u5473\u6E05\u65B0\uFF0C\u6027\u4EF7\u6BD4\u9AD8\uFF0C\u9002\u5408\u65E5\u5E38\u6253\u5361",
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u517B\u751F\u8F7B\u996E\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
+        bookingRequired: false,
+        weatherSensitive: false,
+        replaceableBy: [
+          "poi_075",
+          "poi_076"
+        ],
+        priorityScore: 76
+      },
+      {
+        id: "poi_075",
+        name: "Yee3\xB7\u4E09\u53F7\u6930\xB7\u6930\u5B50\u7092\u51B0\uFF08\u6DF1\u5733\u5927\u60A6\u57CE\u5E97\uFF09",
+        type: "\u8F7B\u98DF\u751C\u996E",
+        subType: "\u6930\u5B50\u7092\u51B0",
+        address: "\u5B9D\u5B89\u533A\u65B0\u5B89\u8857\u9053\u5B9D\u6C11\u793E\u533A25\u533A\u521B\u4E1A\u4E8C\u8DEF61\u53F7",
+        area: "\u5B9D\u5B89\u533A",
+        businessDistrict: "\u5B9D\u5B89\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u5B9D\u5B89\u4F11\u95F2\u5708",
+        price: 22,
+        priceLevel: "price_le_50",
+        meituanRating: 4.5,
+        reviewCount: 405,
+        tags: [
+          "\u7F8E\u98DF",
+          "\u751C\u54C1"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u540C\u4E8B"
+        ],
+        stayMinutes: 20,
+        openTime: "10:00-22:00",
+        queueLevel: "low",
+        distanceLevel: "3-10km",
+        mockMeituanUrl: "mock://meituan/poi_075",
+        reason: "\u989C\u503C\u5728\u7EBF\uFF0C\u51B0\u6C99\u7EC6\u817B\uFF0C\u6851\u845A\u5473\u5F88\u6B63\uFF0C\u4E0D\u9F41\u751C\uFF0C\u9002\u5408\u590F\u5929\u6253\u5361",
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u590F\u65E5\u6E05\u723D\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
+        bookingRequired: false,
+        weatherSensitive: false,
+        replaceableBy: [
+          "poi_074",
+          "poi_073"
+        ],
+        priorityScore: 77
       },
       {
         id: "poi_076",
@@ -2821,25 +4346,47 @@ var init_pois = __esm({
         subType: "\u996E\u54C1/\u9178\u5976\u5E97",
         address: "\u798F\u7530\u533A\u798F\u534E\u4E09\u8DEF118\u53F7G\u5C42\u8309\u9178\u5976\u5E97\u94FA",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u7687\u5EAD\u5E7F\u573A\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 20,
         priceLevel: "price_le_50",
         meituanRating: 4.4,
         reviewCount: 1722,
-        tags: ["\u996E\u54C1", "\u9178\u5976\u5976\u6614", "\u8FDE\u9501\u54C1\u724C", "\u4EBA\u6C14\u699C\u63A8\u8350"],
-        limits: ["\u5BA4\u5185"],
-        fitPeople: ["\u5355\u4EBA", "\u670B\u53CB", "\u60C5\u4FA3"],
+        tags: [
+          "\u996E\u54C1",
+          "\u9178\u5976\u5976\u6614",
+          "\u8FDE\u9501\u54C1\u724C",
+          "\u4EBA\u6C14\u699C\u63A8\u8350"
+        ],
+        limits: [
+          "\u5BA4\u5185"
+        ],
+        fitPeople: [
+          "\u5355\u4EBA",
+          "\u670B\u53CB",
+          "\u60C5\u4FA3"
+        ],
         stayMinutes: 20,
         openTime: "10:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3km\u4EE5\u5185",
         mockMeituanUrl: "mock://meituan/poi_076",
         reason: "\u6DF1\u5733\u9178\u5976\u9C9C\u5976\u4EBA\u6C14\u699C\u5E97\u94FA\uFF0C\u4E3B\u6253\u725B\u6CB9\u679C\u3001\u9752\u82F9\u679C\u7B49\u53E3\u5473\u7684\u9178\u5976\u5976\u6614\uFF0C\u56DE\u5934\u5BA2\u4F17\u591A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u901B\u8857\u6B47\u811A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u901B\u8857\u6B47\u811A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_077", "poi_078"],
+        replaceableBy: [
+          "poi_077",
+          "poi_078"
+        ],
         priorityScore: 77
       },
       {
@@ -2849,25 +4396,48 @@ var init_pois = __esm({
         subType: "\u5496\u5561\u9986",
         address: "\u798F\u7530\u533A\u7687\u5C97\u8DEF5001\u53F7\u6DF1\u4E1A\u4E0A\u57CE\u5C0F\u9547L3\u5C42T3067\u53F7",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u6DF1\u4E1A\u4E0A\u57CE\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 40,
         priceLevel: "price_le_50",
         meituanRating: 4.7,
         reviewCount: 4984,
-        tags: ["\u5496\u5561\u9986", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u521B\u610F\u5496\u5561", "\u65E0\u70DF\u9910\u5385"],
-        limits: ["\u5BA4\u5185", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u670B\u53CB", "\u5546\u52A1", "\u5355\u4EBA"],
+        tags: [
+          "\u5496\u5561\u9986",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u521B\u610F\u5496\u5561",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u5546\u52A1",
+          "\u5355\u4EBA"
+        ],
         stayMinutes: 45,
         openTime: "08:00-22:00",
         queueLevel: "low",
         distanceLevel: "3-10km",
         mockMeituanUrl: "mock://meituan/poi_077",
         reason: "\u798F\u7530\u4E2D\u5FC3\u5496\u5561\u4EBA\u6C14\u699C\u7B2C7\u540D\uFF0C\u4E3B\u6253\u521B\u610F\u5496\u5561\u4E0E\u7CBE\u54C1SOE\uFF0C\u73AF\u5883\u8212\u9002\u9002\u5408\u4F11\u95F2\u6253\u5361",
-        blindBoxThemes: ["\u6587\u827A\u4F11\u95F2\u76D2", "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u6587\u827A\u4F11\u95F2\u76D2",
+          "\u4E0B\u5348\u8336\u60EC\u610F\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_076", "poi_079"],
+        replaceableBy: [
+          "poi_076",
+          "poi_079"
+        ],
         priorityScore: 82
       },
       {
@@ -2877,25 +4447,49 @@ var init_pois = __esm({
         subType: "\u65E5\u6599/\u5BFF\u53F8",
         address: "\u798F\u7530\u533A\u798F\u534E\u8DEFOneAvenue\u5353\u60A6\u4E2D\u5FC3\u4E1C\u533AB2\u5C42229\u53F7\u94FA",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 99,
         priceLevel: "price_le_100",
         meituanRating: 4.3,
         reviewCount: 6942,
-        tags: ["\u65E5\u6599", "\u5BFF\u53F8", "\u56DE\u8F6C\u5BFF\u53F8", "\u9AD8\u6027\u4EF7\u6BD4"],
-        limits: ["\u5BA4\u5185", "\u6709\u5B9D\u5B9D\u6905", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u5355\u4EBA"],
+        tags: [
+          "\u65E5\u6599",
+          "\u5BFF\u53F8",
+          "\u56DE\u8F6C\u5BFF\u53F8",
+          "\u9AD8\u6027\u4EF7\u6BD4"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5B9D\u5B9D\u6905",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u5355\u4EBA"
+        ],
         stayMinutes: 60,
         openTime: "11:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3km\u4EE5\u5185",
         mockMeituanUrl: "mock://meituan/poi_078",
         reason: "\u4EBA\u6C14\u56DE\u8F6C\u5BFF\u53F8\u5E97\uFF0C\u63D0\u4F9B\u9AD8\u6027\u4EF7\u6BD4\u7684\u5BFF\u53F8\u4E0E\u523A\u8EAB\uFF0C\u9002\u5408\u65E5\u5E38\u7528\u9910\u548C\u5BB6\u5EAD\u805A\u9910",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5BB6\u5EAD\u7B80\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5BB6\u5EAD\u7B80\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_079", "poi_080"],
+        replaceableBy: [
+          "poi_079",
+          "poi_080"
+        ],
         priorityScore: 79
       },
       {
@@ -2905,25 +4499,48 @@ var init_pois = __esm({
         subType: "\u706B\u9505/\u83CC\u83C7\u706B\u9505",
         address: "\u798F\u7530\u533A\u5C97\u53A6\u793E\u533A\u5C97\u53A6\u5730\u94C1\u7AD9B\u53E3\u5353\u60A6\u4E2D\u5FC3\u4E1C\u533AL2\u5C42",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 145,
         priceLevel: "price_100_plus",
         meituanRating: 4.7,
         reviewCount: 9345,
-        tags: ["\u706B\u9505", "\u83CC\u83C7\u706B\u9505", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u4EB2\u5B50\u4E92\u52A8"],
-        limits: ["\u5BA4\u5185", "\u6709\u5B9D\u5B9D\u6905"],
-        fitPeople: ["\u4EB2\u5B50", "\u670B\u53CB", "\u591A\u4EBA\u805A\u9910"],
+        tags: [
+          "\u706B\u9505",
+          "\u83CC\u83C7\u706B\u9505",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u4EB2\u5B50\u4E92\u52A8"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5B9D\u5B9D\u6905"
+        ],
+        fitPeople: [
+          "\u4EB2\u5B50",
+          "\u670B\u53CB",
+          "\u591A\u4EBA\u805A\u9910"
+        ],
         stayMinutes: 120,
         openTime: "11:00-22:00",
         queueLevel: "medium",
         distanceLevel: "3km\u4EE5\u5185",
         mockMeituanUrl: "mock://meituan/poi_079",
         reason: "\u798F\u7530\u533A\u4E91\u5357\u706B\u9505\u4EBA\u6C14\u699C\u7B2C3\u540D\uFF0C\u4E3B\u6253\u91CE\u751F\u83CC\u706B\u9505\uFF0C\u8BBE\u6709\u4EB2\u5B50\u4E92\u52A8\u79D1\u666E\u89D2\uFF0C\u9002\u5408\u5BB6\u5EAD\u805A\u9910",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u4EB2\u5B50\u6B22\u805A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u4EB2\u5B50\u6B22\u805A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_078", "poi_081"],
+        replaceableBy: [
+          "poi_078",
+          "poi_081"
+        ],
         priorityScore: 84
       },
       {
@@ -2933,25 +4550,48 @@ var init_pois = __esm({
         subType: "\u65E5\u6599/\u521B\u610F\u65E5\u6599",
         address: "\u798F\u7530\u533A\u798F\u534E\u8DEFOneAvenue\u5353\u60A6\u4E2D\u5FC3\u4E1C\u533AB1\u5C42B1102\u5546\u94FA",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 94,
         priceLevel: "price_le_100",
         meituanRating: 4.4,
         reviewCount: 21602,
-        tags: ["\u65E5\u6599", "\u521B\u610F\u65E5\u6599", "\u4EBA\u6C14\u699C\u63A8\u8350", "\u660E\u661F\u6253\u5361"],
-        limits: ["\u5BA4\u5185", "\u6709\u5B9D\u5B9D\u6905"],
-        fitPeople: ["\u670B\u53CB", "\u60C5\u4FA3", "\u6253\u5361\u7528\u9910"],
+        tags: [
+          "\u65E5\u6599",
+          "\u521B\u610F\u65E5\u6599",
+          "\u4EBA\u6C14\u699C\u63A8\u8350",
+          "\u660E\u661F\u6253\u5361"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5B9D\u5B9D\u6905"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u60C5\u4FA3",
+          "\u6253\u5361\u7528\u9910"
+        ],
         stayMinutes: 90,
         openTime: "11:30-15:30, 16:30-21:30",
         queueLevel: "medium",
         distanceLevel: "3km\u4EE5\u5185",
         mockMeituanUrl: "mock://meituan/poi_080",
         reason: "\u6DF1\u5733\u65E5\u672C\u6599\u7406\u4EBA\u6C14\u699C\u5E97\u94FA\uFF0C\u521B\u610F\u65E5\u6599\u5E97\uFF0C\u660E\u661F\u540C\u6B3E\u6253\u5361\u5730\uFF0C\u9002\u5408\u670B\u53CB\u805A\u4F1A",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u60C5\u4FA3\u7EA6\u4F1A\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_079", "poi_082"],
+        replaceableBy: [
+          "poi_079",
+          "poi_082"
+        ],
         priorityScore: 80
       },
       {
@@ -2961,25 +4601,50 @@ var init_pois = __esm({
         subType: "\u706B\u9505/\u5DDD\u6E1D\u706B\u9505",
         address: "\u798F\u7530\u533A\u798F\u534E\u8DEF\u4E0E\u5C97\u53A6\u4E00\u8DEF\u4EA4\u53C9\u53E3\u897F\u5317\u89D2\u5353\u60A6\u4E2D\u5FC3\u4E1C\u533A",
         area: "\u798F\u7530\u533A",
-        businessDistrict: "\u5353\u60A6\u4E2D\u5FC3\u5546\u5708",
+        businessDistrict: "\u798F\u7530\u4E2D\u5FC3\u7247\u533A",
+        routeCluster: "\u798F\u7530\u4E2D\u5FC3\u5708",
         price: 150,
         priceLevel: "price_100_plus",
         meituanRating: 4.6,
         reviewCount: 20364,
-        tags: ["\u706B\u9505", "\u5DDD\u6E1D\u706B\u9505", "\u8FDE\u9501\u54C1\u724C", "\u4EBA\u6C14\u699C\u63A8\u8350"],
-        limits: ["\u5BA4\u5185", "\u6709\u5305\u95F4", "\u6709\u5927\u684C", "\u65E0\u70DF\u9910\u5385"],
-        fitPeople: ["\u670B\u53CB", "\u5BB6\u5EAD", "\u5546\u52A1"],
+        tags: [
+          "\u706B\u9505",
+          "\u5DDD\u6E1D\u706B\u9505",
+          "\u8FDE\u9501\u54C1\u724C",
+          "\u4EBA\u6C14\u699C\u63A8\u8350"
+        ],
+        limits: [
+          "\u5BA4\u5185",
+          "\u6709\u5305\u95F4",
+          "\u6709\u5927\u684C",
+          "\u65E0\u70DF\u9910\u5385"
+        ],
+        fitPeople: [
+          "\u670B\u53CB",
+          "\u5BB6\u5EAD",
+          "\u5546\u52A1"
+        ],
         stayMinutes: 120,
         openTime: "\u5168\u5929\u8425\u4E1A",
         queueLevel: "low",
         distanceLevel: "3km\u4EE5\u5185",
         mockMeituanUrl: "mock://meituan/poi_081",
         reason: "\u6DF1\u5733\u5DDD\u6E1D\u706B\u9505\u4EBA\u6C14\u699C\u5E97\u94FA\uFF0C\u4E3B\u6253\u6BDB\u809A\u706B\u9505\uFF0C\u63D0\u4F9B\u5305\u95F4\u548C\u5927\u684C\uFF0C\u9002\u5408\u5404\u7C7B\u805A\u9910",
-        blindBoxThemes: ["\u7F8E\u98DF\u6253\u5361\u76D2", "\u5546\u52A1\u805A\u9910\u76D2"],
-        availableTools: ["queueCheck", "availabilityCheck", "bookingMock"],
+        blindBoxThemes: [
+          "\u7F8E\u98DF\u6253\u5361\u76D2",
+          "\u5546\u52A1\u805A\u9910\u76D2"
+        ],
+        availableTools: [
+          "queueCheck",
+          "availabilityCheck",
+          "bookingMock"
+        ],
         bookingRequired: false,
         weatherSensitive: false,
-        replaceableBy: ["poi_080", "poi_079"],
+        replaceableBy: [
+          "poi_080",
+          "poi_079"
+        ],
         priorityScore: 83
       }
     ];
@@ -3002,6 +4667,7 @@ function normalizePoi(raw) {
     address: optionalString(raw.address),
     area: optionalString(raw.area),
     businessDistrict: asString(raw.businessDistrict, "\u672A\u77E5\u5546\u5708"),
+    routeCluster: optionalString(raw.routeCluster),
     price: asNumber(raw.price, 0),
     priceLevel: optionalString(raw.priceLevel),
     meituanRating: optionalNumber(raw.meituanRating),

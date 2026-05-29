@@ -196,6 +196,8 @@ ranking.py 不作为 Vercel 运行时文件。
 3. 根据评分、排队、室内、价格进行排序 -> scorePoi
 4. 根据用户时长生成 4-6 小时路线 -> buildRoute
 5. 排队、下雨、闭店/不可用重规划 -> replanRoute
+6. 根据 routeCluster 控制同一条路线尽量落在同一个路线圈
+7. 默认过滤 10km以上 的远距离 POI，替换时要求中近距离
 ```
 
 B 前端仍然只需要调用：
@@ -207,6 +209,8 @@ handleReplan(event, plan, { pois })
 ```
 
 不需要调用 Python。
+
+`docs/reference/function.py` 保留了 C 最新提供的 Python 距离过滤、近距离加权、替换规则参考。线上/前端仍运行 TypeScript 版本，核心逻辑已经合并到 `src/planner/simpleRoutePlanner.ts`。
 
 ## 代预订辅助工具说明
 

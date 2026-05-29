@@ -39,6 +39,7 @@ export interface Poi {
   address?: string;
   area?: string;
   businessDistrict: string;
+  routeCluster?: string;
   price: number;
   priceLevel?: string;
   meituanRating?: number;

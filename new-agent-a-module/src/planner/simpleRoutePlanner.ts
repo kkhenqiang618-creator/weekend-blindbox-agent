@@ -1,7 +1,12 @@
 import type { PlanBChange, PlanBResult, Poi, Requirements, ReplanEvent, Route, RouteStep } from "../agent/types.ts";
 
 export function buildRoute(requirements: Requirements, pois: Poi[], theme: string): Route {
-  const candidates = filterPois(requirements, pois, theme);
+  const allCandidates = filterPois(requirements, pois, theme);
+  const routeCluster = selectRouteCluster(allCandidates, requirements, theme);
+  const clusteredCandidates = routeCluster
+    ? allCandidates.filter((poi) => poi.routeCluster === routeCluster)
+    : allCandidates;
+  const candidates = clusteredCandidates.length >= 2 ? clusteredCandidates : allCandidates;
   const steps: RouteStep[] = [];
   const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
   const maxMinutes = targetMinutes + 30;
@@ -46,8 +51,9 @@ export function filterPois(requirements: Requirements, pois: Poi[], theme?: stri
     .filter((poi) => poi.price <= requirements.budgetMax)
     .filter((poi) => poi.fitPeople.includes(requirements.peopleType))
     .filter((poi) => {
+      if (isFarDistance(poi.distanceLevel) && requirements.distanceLevel !== "10km以上") return false;
       if (!requirements.distanceLevel || !poi.distanceLevel) return true;
-      if (requirements.distanceLevel === "3-10km") return true;
+      if (requirements.distanceLevel === "3-10km") return isNearOrMediumDistance(poi.distanceLevel);
       return poi.distanceLevel === requirements.distanceLevel;
     })
     .filter((poi) => {
@@ -205,10 +211,34 @@ function scorePoi(poi: Poi, requirements: Requirements, theme?: string): number 
   if (poi.queueLevel === "high") score -= 25;
   if (poi.limits.includes("室内") || poi.limits.includes("雨天可去") || poi.weatherSensitive === false) score += 5;
   if (poi.price <= 50) score += 5;
+  if (isNearDistance(poi.distanceLevel)) score += 15;
+  if (isMediumDistance(poi.distanceLevel)) score += 5;
+  if (isFarDistance(poi.distanceLevel)) score -= 18;
   if (poi.stayMinutes > requirements.durationHours * 60) score -= 30;
   if (poi.stayMinutes > 150) score -= 8;
 
   return score;
+}
+
+function selectRouteCluster(candidates: Poi[], requirements: Requirements, theme?: string): string | undefined {
+  const clusters = new Map<string, { score: number; types: Set<string>; count: number }>();
+
+  for (const poi of candidates) {
+    if (!poi.routeCluster) continue;
+    const bucket = clusters.get(poi.routeCluster) ?? { score: 0, types: new Set<string>(), count: 0 };
+    bucket.score += scorePoi(poi, requirements, theme);
+    bucket.types.add(poi.type);
+    bucket.count += 1;
+    clusters.set(poi.routeCluster, bucket);
+  }
+
+  return [...clusters.entries()]
+    .filter(([, bucket]) => bucket.count >= 2)
+    .sort(([, a], [, b]) => {
+      const scoreA = a.score + a.types.size * 35 + Math.min(a.count, 6) * 8;
+      const scoreB = b.score + b.types.size * 35 + Math.min(b.count, 6) * 8;
+      return scoreB - scoreA;
+    })[0]?.[0];
 }
 
 function findTargetStep(event: ReplanEvent, currentRoute: Route): RouteStep | undefined {
@@ -231,7 +261,11 @@ function findReplacement(
 ): Poi | undefined {
   const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
-  const directReplacement = pois.find((poi) => replaceableIds.includes(poi.id) && !usedIds.has(poi.id));
+  const directReplacement = pois.find((poi) =>
+    replaceableIds.includes(poi.id)
+    && !usedIds.has(poi.id)
+    && isNearEnoughForReplacement(poi, targetPoi)
+  );
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
 
   return pois
@@ -239,12 +273,38 @@ function findReplacement(
     .filter((poi) => poi.fitPeople.includes(requirements.peopleType))
     .filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40))
     .filter((poi) => poi.type === targetPoi.type || event.type === "rain")
+    .filter((poi) => isNearEnoughForReplacement(poi, targetPoi))
     .filter((poi) => matchesEvent(event, poi))
     .sort((a, b) => {
+      const sameClusterA = a.routeCluster && a.routeCluster === targetPoi.routeCluster ? 35 : 0;
+      const sameClusterB = b.routeCluster && b.routeCluster === targetPoi.routeCluster ? 35 : 0;
       const sameDistrictA = a.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
       const sameDistrictB = b.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
-      return sameDistrictB + scorePoi(b, requirements) - (sameDistrictA + scorePoi(a, requirements));
+      return sameClusterB + sameDistrictB + scorePoi(b, requirements) - (sameClusterA + sameDistrictA + scorePoi(a, requirements));
     })[0];
+}
+
+function isNearEnoughForReplacement(candidate: Poi, targetPoi: Poi): boolean {
+  if (isFarDistance(candidate.distanceLevel)) return false;
+  if (targetPoi.routeCluster && candidate.routeCluster) return candidate.routeCluster === targetPoi.routeCluster;
+  if (targetPoi.area && candidate.area) return candidate.area === targetPoi.area;
+  return true;
+}
+
+function isNearDistance(distanceLevel?: string): boolean {
+  return distanceLevel === "3km内" || distanceLevel === "3km以内" || distanceLevel === "near";
+}
+
+function isMediumDistance(distanceLevel?: string): boolean {
+  return distanceLevel === "3-10km" || distanceLevel === "medium" || !distanceLevel;
+}
+
+function isNearOrMediumDistance(distanceLevel?: string): boolean {
+  return isNearDistance(distanceLevel) || isMediumDistance(distanceLevel);
+}
+
+function isFarDistance(distanceLevel?: string): boolean {
+  return distanceLevel === "10km以上" || distanceLevel === "far";
 }
 
 function matchesEvent(event: ReplanEvent, poi: Poi): boolean {

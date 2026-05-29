@@ -31,7 +31,7 @@ console.log(`故事：${plan.blindBox.story}`);
 
 console.log("\nStep 3｜生成路线");
 for (const step of plan.route.steps) {
-  console.log(`${step.order}. ${step.poi.name}｜${step.poi.type}｜${step.poi.subType}｜停留 ${step.poi.stayMinutes} 分钟｜排队 ${step.poi.queueLevel}`);
+  console.log(`${step.order}. ${step.poi.name}｜${step.poi.type}｜${step.poi.subType}｜${step.poi.routeCluster ?? "未分圈"}｜停留 ${step.poi.stayMinutes} 分钟｜排队 ${step.poi.queueLevel}`);
 }
 console.log(`总耗时：${plan.route.totalMinutes} 分钟`);
 console.log(`预计预算：${plan.route.totalBudget} 元`);
@@ -65,7 +65,13 @@ if (reservationTasks.length === 0) {
 }
 
 console.log("\nStep 6｜模拟异常事件");
-const busyMeal = pois.find((poi) => poi.type === "餐饮正餐" && poi.queueLevel === "high");
+const currentCluster = plan.route.steps[0]?.poi.routeCluster;
+const busyMeal = pois.find((poi) =>
+  poi.type === "餐饮正餐"
+  && poi.routeCluster === currentCluster
+  && poi.queueLevel !== "low"
+) ?? pois.find((poi) => poi.type === "餐饮正餐" && poi.routeCluster === currentCluster)
+  ?? pois.find((poi) => poi.type === "餐饮正餐" && poi.queueLevel === "high");
 if (!busyMeal) {
   console.log("没有找到可模拟排队异常的餐饮点。");
 } else {
@@ -73,8 +79,8 @@ if (!busyMeal) {
 
   const routeWithBusyMeal = {
     ...plan.route,
-    steps: plan.route.steps.map((step) =>
-      step.poi.type === "餐饮正餐"
+    steps: plan.route.steps.map((step, index) =>
+      step.poi.type === "餐饮正餐" || index === Math.min(2, plan.route.steps.length - 1)
         ? { ...step, poi: busyMeal, note: busyMeal.reason }
         : step
     )
@@ -102,7 +108,7 @@ if (!busyMeal) {
 
   console.log("\n调整后路线：");
   for (const step of replanned.route.steps) {
-    console.log(`${step.order}. ${step.poi.name}｜${step.poi.type}｜排队 ${step.poi.queueLevel}`);
+    console.log(`${step.order}. ${step.poi.name}｜${step.poi.type}｜${step.poi.routeCluster ?? "未分圈"}｜排队 ${step.poi.queueLevel}`);
   }
 }
 

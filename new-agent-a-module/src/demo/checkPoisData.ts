@@ -38,6 +38,12 @@ const highMeals = pois.filter((poi) => poi.type === "餐饮正餐" && poi.queueL
 const lowMeals = pois.filter((poi) => poi.type === "餐饮正餐" && poi.queueLevel === "low");
 const outdoor = pois.filter((poi) => poi.weatherSensitive || poi.limits.includes("室外"));
 const indoor = pois.filter((poi) => poi.weatherSensitive === false || poi.limits.includes("室内") || poi.limits.includes("雨天可去"));
+const byRouteCluster = new Map<string, number>();
+const farPois = pois.filter((poi) => poi.distanceLevel === "10km以上" || poi.distanceLevel === "far");
+for (const poi of pois) {
+  if (!poi.routeCluster) issues.push(`${poi.id} ${poi.name}: 缺少 routeCluster`);
+  byRouteCluster.set(poi.routeCluster ?? "未分圈", (byRouteCluster.get(poi.routeCluster ?? "未分圈") ?? 0) + 1);
+}
 
 console.log("\nPOI 数据检查结果");
 console.log(`总数：${pois.length}`);
@@ -50,6 +56,11 @@ console.log(`高排队餐饮：${highMeals.length}`);
 console.log(`低排队餐饮：${lowMeals.length}`);
 console.log(`室外/天气敏感点：${outdoor.length}`);
 console.log(`室内/雨天可去点：${indoor.length}`);
+console.log(`远距离点：${farPois.length}`);
+console.log("路线圈分布：");
+for (const [cluster, count] of byRouteCluster) {
+  console.log(`- ${cluster}: ${count}`);
+}
 
 if (issues.length === 0) {
   console.log("\n基础字段检查通过。");
