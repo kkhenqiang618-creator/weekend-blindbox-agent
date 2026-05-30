@@ -4,6 +4,30 @@ export async function reserveOrJoinPlan(route: Route): Promise<ToolResult[]> {
   return route.steps.map((step) => {
     const reservation = buildReservationAssist(step);
 
+    if (reservation.isReservationRelevant && !reservation.shouldReserve) {
+      return {
+        toolName: "reservationAssist",
+        status: "success",
+        poiId: step.poi.id,
+        message: `${step.poi.name} 已检查预订需求，当前无需提前预订`,
+        result: {
+          joined: true,
+          reservationNeeded: false,
+          reason: reservation.reason,
+          visitTimeText: reservation.visitTimeText,
+          script: null,
+          actions: {
+            copyScript: false,
+            callPhone: false,
+            openMeituan: Boolean(step.poi.mockMeituanUrl)
+          },
+          phone: step.poi.phone ?? null,
+          meituanUrl: step.poi.mockMeituanUrl ?? null,
+          disclaimer: "Agent 已判断该正餐节点当前不需要提前预订，仍会保留美团入口供用户查看。"
+        }
+      };
+    }
+
     if (!reservation.shouldReserve) {
       return {
         toolName: "reserveOrJoinPlan",
@@ -46,6 +70,7 @@ function buildReservationAssist(step: RouteStep) {
   const visitTimeText = estimateVisitTimeText(step);
 
   return {
+    isReservationRelevant: isReservationRelevant(poi),
     shouldReserve: shouldPrepareReservation(poi),
     visitTimeText,
     reason: getReservationReason(poi),
@@ -59,19 +84,21 @@ function buildReservationAssist(step: RouteStep) {
 
 function shouldPrepareReservation(poi: Poi): boolean {
   if (poi.bookingRequired) return true;
-  if (poi.availableTools?.includes("reservationAssist")) return true;
 
-  const isMeal = poi.type === "餐饮正餐" || /餐|饭|火锅|烧烤|粤菜|正餐|简餐/.test(poi.subType);
   const isBusy = poi.queueLevel === "high" || poi.queueLevel === "medium";
-  const isPopular = (poi.reviewCount ?? 0) >= 1000 || (poi.meituanRating ?? 0) >= 4.7;
 
-  return isMeal && (isBusy || isPopular);
+  return isReservationRelevant(poi) && isBusy;
+}
+
+function isReservationRelevant(poi: Poi): boolean {
+  return poi.type === "餐饮正餐" || /餐|饭|火锅|烧烤|粤菜|正餐|简餐/.test(poi.subType);
 }
 
 function getReservationReason(poi: Poi): string {
   if (poi.bookingRequired) return "该地点标记为需要提前预约。";
   if (poi.queueLevel === "high") return "该餐饮点排队风险较高，建议提前电话或平台确认座位。";
   if (poi.queueLevel === "medium") return "该餐饮点可能需要等待，提前确认能降低到店不确定性。";
+  if (isReservationRelevant(poi)) return "该正餐节点排队风险较低，当前可直接加入行程，无需提前预订。";
   return "该地点适合提前确认营业和接待情况。";
 }
 

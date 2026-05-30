@@ -18,6 +18,7 @@ type ReservationAssistResult = {
   meituanUrl?: string | null;
   disclaimer?: string;
   visitTimeText?: string;
+  reservationNeeded?: boolean;
 };
 
 const STATUS_CONFIG: Record<string, { icon: string; color: string; bg: string; border: string }> = {
@@ -108,11 +109,18 @@ export default function ExecutionPanel({ tasks }: Props) {
 function ReservationAssistCard({ task }: { task: ToolResult }) {
   const result = (task.result ?? {}) as ReservationAssistResult;
   const actions = result.actions ?? {};
+  const needsReservation = result.reservationNeeded !== false;
 
   return (
-    <div className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50 via-white to-purple-50 p-5 shadow-sm">
+    <div className={`rounded-2xl border p-5 shadow-sm ${
+      needsReservation
+        ? 'border-amber-200 bg-gradient-to-br from-amber-50 via-white to-purple-50'
+        : 'border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-purple-50'
+    }`}>
       <div className="flex items-start gap-4">
-        <div className="w-10 h-10 rounded-2xl bg-amber-400 flex items-center justify-center flex-shrink-0 shadow-md shadow-amber-200">
+        <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 shadow-md ${
+          needsReservation ? 'bg-amber-400 shadow-amber-200' : 'bg-emerald-400 shadow-emerald-200'
+        }`}>
           <svg className="w-5 h-5 text-purple-950" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M7 21h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
@@ -121,8 +129,10 @@ function ReservationAssistCard({ task }: { task: ToolResult }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2 mb-2">
             <p className="text-sm font-semibold text-purple-950">Agent 代预订辅助</p>
-            <span className="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-[11px] font-semibold">
-              等待用户确认
+            <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${
+              needsReservation ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              {needsReservation ? '等待用户确认' : '无需提前预订'}
             </span>
           </div>
 
@@ -135,7 +145,7 @@ function ReservationAssistCard({ task }: { task: ToolResult }) {
             </div>
           )}
 
-          {result.script && (
+          {needsReservation && result.script && (
             <div className="mt-3 rounded-xl bg-purple-950 p-4 text-white">
               <p className="text-[11px] font-semibold text-amber-200 mb-2">预订/确认座位话术</p>
               <p className="text-sm leading-relaxed">{result.script}</p>
@@ -143,10 +153,10 @@ function ReservationAssistCard({ task }: { task: ToolResult }) {
           )}
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {actions.copyScript && (
+            {needsReservation && actions.copyScript && (
               <ActionPill label="复制话术" iconPath="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             )}
-            {actions.callPhone && (
+            {needsReservation && actions.callPhone && (
               <ActionPill label={result.phone ? `拨打 ${result.phone}` : '拨打商家电话'} iconPath="M3 5a2 2 0 012-2h3.28a1 1 0 01.95.68l1.5 4.49a1 1 0 01-.5 1.21l-2.26 1.13a11.04 11.04 0 005.52 5.52l1.13-2.26a1 1 0 011.21-.5l4.49 1.5a1 1 0 01.68.95V19a2 2 0 01-2 2h-1C9.72 21 3 14.28 3 6V5z" />
             )}
             {actions.openMeituan && (

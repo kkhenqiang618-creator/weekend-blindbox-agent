@@ -888,6 +888,29 @@ var init_checkQueue = __esm({
 async function reserveOrJoinPlan(route) {
   return route.steps.map((step) => {
     const reservation = buildReservationAssist(step);
+    if (reservation.isReservationRelevant && !reservation.shouldReserve) {
+      return {
+        toolName: "reservationAssist",
+        status: "success",
+        poiId: step.poi.id,
+        message: `${step.poi.name} \u5DF2\u68C0\u67E5\u9884\u8BA2\u9700\u6C42\uFF0C\u5F53\u524D\u65E0\u9700\u63D0\u524D\u9884\u8BA2`,
+        result: {
+          joined: true,
+          reservationNeeded: false,
+          reason: reservation.reason,
+          visitTimeText: reservation.visitTimeText,
+          script: null,
+          actions: {
+            copyScript: false,
+            callPhone: false,
+            openMeituan: Boolean(step.poi.mockMeituanUrl)
+          },
+          phone: step.poi.phone ?? null,
+          meituanUrl: step.poi.mockMeituanUrl ?? null,
+          disclaimer: "Agent \u5DF2\u5224\u65AD\u8BE5\u6B63\u9910\u8282\u70B9\u5F53\u524D\u4E0D\u9700\u8981\u63D0\u524D\u9884\u8BA2\uFF0C\u4ECD\u4F1A\u4FDD\u7559\u7F8E\u56E2\u5165\u53E3\u4F9B\u7528\u6237\u67E5\u770B\u3002"
+        }
+      };
+    }
     if (!reservation.shouldReserve) {
       return {
         toolName: "reserveOrJoinPlan",
@@ -927,6 +950,7 @@ function buildReservationAssist(step) {
   const poi = step.poi;
   const visitTimeText = estimateVisitTimeText(step);
   return {
+    isReservationRelevant: isReservationRelevant(poi),
     shouldReserve: shouldPrepareReservation(poi),
     visitTimeText,
     reason: getReservationReason(poi),
@@ -939,16 +963,17 @@ function buildReservationAssist(step) {
 }
 function shouldPrepareReservation(poi) {
   if (poi.bookingRequired) return true;
-  if (poi.availableTools?.includes("reservationAssist")) return true;
-  const isMeal = poi.type === "\u9910\u996E\u6B63\u9910" || /餐|饭|火锅|烧烤|粤菜|正餐|简餐/.test(poi.subType);
   const isBusy = poi.queueLevel === "high" || poi.queueLevel === "medium";
-  const isPopular = (poi.reviewCount ?? 0) >= 1e3 || (poi.meituanRating ?? 0) >= 4.7;
-  return isMeal && (isBusy || isPopular);
+  return isReservationRelevant(poi) && isBusy;
+}
+function isReservationRelevant(poi) {
+  return poi.type === "\u9910\u996E\u6B63\u9910" || /餐|饭|火锅|烧烤|粤菜|正餐|简餐/.test(poi.subType);
 }
 function getReservationReason(poi) {
   if (poi.bookingRequired) return "\u8BE5\u5730\u70B9\u6807\u8BB0\u4E3A\u9700\u8981\u63D0\u524D\u9884\u7EA6\u3002";
   if (poi.queueLevel === "high") return "\u8BE5\u9910\u996E\u70B9\u6392\u961F\u98CE\u9669\u8F83\u9AD8\uFF0C\u5EFA\u8BAE\u63D0\u524D\u7535\u8BDD\u6216\u5E73\u53F0\u786E\u8BA4\u5EA7\u4F4D\u3002";
   if (poi.queueLevel === "medium") return "\u8BE5\u9910\u996E\u70B9\u53EF\u80FD\u9700\u8981\u7B49\u5F85\uFF0C\u63D0\u524D\u786E\u8BA4\u80FD\u964D\u4F4E\u5230\u5E97\u4E0D\u786E\u5B9A\u6027\u3002";
+  if (isReservationRelevant(poi)) return "\u8BE5\u6B63\u9910\u8282\u70B9\u6392\u961F\u98CE\u9669\u8F83\u4F4E\uFF0C\u5F53\u524D\u53EF\u76F4\u63A5\u52A0\u5165\u884C\u7A0B\uFF0C\u65E0\u9700\u63D0\u524D\u9884\u8BA2\u3002";
   return "\u8BE5\u5730\u70B9\u9002\u5408\u63D0\u524D\u786E\u8BA4\u8425\u4E1A\u548C\u63A5\u5F85\u60C5\u51B5\u3002";
 }
 function estimateVisitTimeText(step) {
