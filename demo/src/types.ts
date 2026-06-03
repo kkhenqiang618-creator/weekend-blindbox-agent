@@ -98,4 +98,4 @@ export interface UserInput {
   quickSelections: Record<string, unknown>;
 }
 
-export type AppStep = 'input' | 'loading' | 'plan' | 'executed' | 'planb';
+export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'executed' | 'planb';

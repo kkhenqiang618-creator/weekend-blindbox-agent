@@ -1,158 +1,162 @@
-import type { PlanBResult } from '../types';
+import type { PlanBResult, Route } from '../types';
 
 interface Props {
   planB: PlanBResult;
 }
 
-export default function PlanBComparison({ planB }: Props) {
+const EVENT_COPY: Record<string, { title: string; tone: string; icon: string }> = {
+  queue: {
+    title: '检测到异常：排队过长',
+    tone: 'border-amber-200 bg-amber-50 text-amber-700',
+    icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+  },
+  rain: {
+    title: '检测到异常：天气变化',
+    tone: 'border-sky-200 bg-sky-50 text-sky-700',
+    icon: 'M3 15a4 4 0 004 4h9a5 5 0 10-4.34-7.41 3 3 0 10-6.28.81A3.988 3.988 0 003 15z',
+  },
+};
+
+function RouteSummary({ title, route, accent }: { title: string; route: Route; accent: 'before' | 'after' }) {
+  const isAfter = accent === 'after';
+
   return (
-    <div className="space-y-6 animate-scale-in">
-      {/* Alert banner */}
-      <div className="rounded-2xl border-2 border-gold/30 bg-gold-soft/20 p-5">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-gold-soft flex items-center justify-center flex-shrink-0 border border-gold/30">
-            <svg className="w-5 h-5 gold-dark" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+    <div className={`magic-card p-5 ${isAfter ? 'ring-1 ring-purple-200' : ''}`}>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h4 className="flex items-center gap-2 text-sm font-semibold text-purple-950">
+          <svg className={`h-4 w-4 ${isAfter ? 'text-purple-600' : 'text-purple-300'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={isAfter ? 'M13 10V3L4 14h7v7l9-11h-7z' : 'M11 19l-7-7 7-7m8 14l-7-7 7-7'} />
+          </svg>
+          {title}
+        </h4>
+        {isAfter && (
+          <span className="rounded-full border border-purple-200 bg-purple-50 px-2 py-1 text-[10px] font-semibold text-purple-600">
+            Plan B
+          </span>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        {route.steps.map((step) => (
+          <div key={`${title}-${step.poi.id}`} className="grid grid-cols-[26px_minmax(0,1fr)] gap-3">
+            <span className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-semibold ${
+              isAfter ? 'border-purple-200 bg-purple-50 text-purple-600' : 'border-slate-200 bg-white text-slate-500'
+            }`}>
+              {step.order}
+            </span>
+            <div className="min-w-0">
+              <p className={`truncate text-sm ${isAfter ? 'font-semibold text-purple-950' : 'text-slate-600'}`}>
+                {step.poi.name}
+              </p>
+              <p className="truncate text-xs text-purple-300">{step.poi.businessDistrict} · {step.poi.stayMinutes}min</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 flex items-center gap-3 border-t border-purple-50 pt-4 text-sm text-purple-400">
+        <span>{route.totalMinutes} 分钟</span>
+        <span className="h-1 w-1 rounded-full bg-purple-200" />
+        <span>¥{route.totalBudget}</span>
+      </div>
+    </div>
+  );
+}
+
+export default function PlanBComparison({ planB }: Props) {
+  const event = EVENT_COPY[planB.event.type] || {
+    title: `检测到异常：${planB.event.type}`,
+    tone: 'border-purple-200 bg-purple-50 text-purple-700',
+    icon: 'M12 9v2m0 4h.01M11 3h2l7 18H4L11 3z',
+  };
+
+  return (
+    <div className="space-y-6">
+      <section className={`rounded-3xl border p-5 sm:p-6 ${event.tone}`}>
+        <div className="flex items-start gap-4">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-current/20 bg-white/70">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={event.icon} />
             </svg>
           </div>
-          <div>
-            <h3 className="text-lg font-display font-semibold purple-950 mb-1">
-              检测到异常：{planB.event.type === 'queue' ? '排队过长' : planB.event.type === 'rain' ? '天气变化' : planB.event.type}
-            </h3>
-            <p className="text-sm purple-400">{planB.event.message}</p>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] opacity-70">Route recovery</p>
+            <h2 className="mt-1 text-2xl font-display font-semibold text-purple-950">{event.title}</h2>
+            <p className="mt-2 text-sm text-purple-950/75">{planB.event.message || planB.impact}</p>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Impact */}
-      <div className="magic-card p-6">
-        <h4 className="text-sm font-semibold purple-950 mb-2 flex items-center gap-2">
-          <svg className="w-4 h-4 gold-dark" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          影响分析
-        </h4>
-        <p className="text-sm purple-400 mb-4">{planB.impact}</p>
-        <p className="text-sm purple-950 purple-50 rounded-xl p-3 border purple-100">
-          {planB.message}
-        </p>
-      </div>
+      <section className="magic-card p-5 sm:p-6">
+        <div className="grid gap-5 md:grid-cols-[220px_minmax(0,1fr)]">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-purple-300">Decision logic</p>
+            <h3 className="mt-2 text-lg font-semibold text-purple-950">调整逻辑</h3>
+          </div>
+          <div className="space-y-3">
+            <p className="rounded-2xl border border-purple-100 bg-white px-4 py-3 text-sm leading-6 text-purple-950">
+              {planB.impact}
+            </p>
+            <p className="rounded-2xl bg-purple-50 px-4 py-3 text-sm leading-6 text-purple-700">
+              {planB.message}
+            </p>
+          </div>
+        </div>
+      </section>
 
-      {/* Changes */}
-      <div className="magic-card p-6">
-        <h4 className="text-sm font-semibold purple-950 mb-4 flex items-center gap-2">
-          <svg className="w-4 h-4 purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          路线调整记录
-        </h4>
+      <section className="magic-card p-5 sm:p-6">
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-purple-300">Change log</p>
+            <h3 className="mt-2 text-lg font-semibold text-purple-950">路线调整记录</h3>
+          </div>
+          <span className="rounded-full border border-purple-100 bg-purple-50 px-3 py-1 text-xs text-purple-500">
+            {planB.changes.length} 项变更
+          </span>
+        </div>
 
         <div className="space-y-3">
-          {planB.changes.map((change, i) => (
-            <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-purple-50 border border-purple-100">
-              <span className={`px-2 py-0.5 text-xs rounded-md font-medium border ${
-                change.action === 'replace' ? 'bg-blue-50 text-blue-600 border-blue-200' :
-                change.action === 'shorten' ? 'bg-amber-50 text-amber-600 border-amber-200' :
-                'bg-red-50 text-red-500 border-red-200'
-              }`}>
-                {change.action === 'replace' ? '替换' : change.action === 'shorten' ? '缩短' : '移除'}
-              </span>
-              <div className="flex-1">
-                {change.from && change.to ? (
-                  <p className="text-sm purple-950">
-                    <span className="line-through purple-300">{change.from}</span>
-                    <svg className="w-4 h-4 inline mx-1 purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                    </svg>
-                    <span className="purple-600-dark font-medium">{change.to}</span>
-                  </p>
-                ) : change.to ? (
-                  <p className="text-sm purple-950">
-                    新增：<span className="purple-600-dark font-medium">{change.to}</span>
-                  </p>
-                ) : (
-                  <p className="text-sm purple-950">
-                    移除：<span className="line-through purple-300">{change.from}</span>
-                  </p>
+          {planB.changes.map((change, index) => (
+            <div key={`${change.action}-${index}`} className="rounded-2xl border border-purple-100 bg-white p-4">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-600">
+                  {change.action === 'replace' ? '替换' : change.action === 'shorten' ? '缩短' : '移除'}
+                </span>
+                {change.from && <span className="text-slate-400 line-through">{change.from}</span>}
+                {change.from && change.to && (
+                  <svg className="h-4 w-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                  </svg>
                 )}
-                <p className="text-xs purple-400 mt-1">{change.reason}</p>
+                {change.to && <span className="font-semibold text-purple-950">{change.to}</span>}
               </div>
+              <p className="mt-2 text-sm leading-6 text-purple-400">{change.reason}</p>
             </div>
           ))}
         </div>
-      </div>
+      </section>
 
-      {/* Before / After route comparison */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="magic-card p-5">
-          <h4 className="text-sm font-semibold purple-400 mb-3 flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-            调整前路线
-          </h4>
-          <div className="space-y-2">
-            {planB.beforeRoute.steps.map((step) => (
-              <div key={step.poi.id} className="flex items-center gap-2 text-sm">
-                <span className="w-5 h-5 rounded-full bg-purple-50 flex items-center justify-center text-xs purple-400 font-medium border border-purple-100">
-                  {step.order}
-                </span>
-                <span className="purple-400">{step.poi.name}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 text-xs purple-300">
-            {planB.beforeRoute.totalMinutes}分钟 · ¥{planB.beforeRoute.totalBudget}
-          </div>
-        </div>
+      <section className="grid gap-5 md:grid-cols-2">
+        <RouteSummary title="调整前路线" route={planB.beforeRoute} accent="before" />
+        <RouteSummary title="调整后路线" route={planB.afterRoute} accent="after" />
+      </section>
 
-        <div className="magic-card p-5 relative overflow-hidden purple-300">
-          <div className="absolute top-3 right-3 px-2 py-0.5 text-[10px] font-semibold rounded-md purple-100 purple-600-dark border purple-200">
-            Plan B
-          </div>
-          <h4 className="text-sm font-semibold purple-600-dark mb-3 flex items-center gap-2">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            调整后路线
-          </h4>
-          <div className="space-y-2">
-            {planB.afterRoute.steps.map((step) => (
-              <div key={step.poi.id} className="flex items-center gap-2 text-sm">
-                <span className="w-5 h-5 rounded-full purple-100 flex items-center justify-center text-xs purple-600-dark font-medium border purple-200">
-                  {step.order}
-                </span>
-                <span className="purple-950 font-medium">{step.poi.name}</span>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3 text-xs purple-300">
-            {planB.afterRoute.totalMinutes}分钟 · ¥{planB.afterRoute.totalBudget}
-          </div>
-        </div>
-      </div>
-
-      {/* Preferences */}
-      <div className="flex flex-wrap gap-3 text-sm">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-50 border border-green-200">
-          <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <section className="flex flex-wrap gap-3 text-sm">
+        <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-700">
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
-          <span className="purple-400">
-            保留了：{planB.keptPreferences.join('、') || '无'}
-          </span>
+          保留：{planB.keptPreferences.join('、') || '无'}
         </div>
         {planB.sacrificed.length > 0 && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-50 border border-purple-100">
-            <svg className="w-4 h-4 purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-slate-500">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
-            <span className="purple-400">
-              牺牲了：{planB.sacrificed.join('、')}
-            </span>
+            牺牲：{planB.sacrificed.join('、')}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

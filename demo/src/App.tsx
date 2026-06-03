@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { Plan, AppStep, PlanBResult } from './types';
+import type { Plan, AppStep } from './types';
 import InputPanel from './components/InputPanel';
 import GiftBoxAnimation from './components/GiftBoxAnimation';
 import RibbonsBackground from './components/RibbonsBackground';
@@ -162,7 +162,7 @@ export default function App() {
       <RibbonsBackground />
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-purple-100 bg-white/80 backdrop-blur-xl">
-        <div className="max-w-4xl mx-auto px-6 py-3 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {canGoBack && (
               <button
@@ -203,7 +203,7 @@ export default function App() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-4xl mx-auto px-6 py-10 relative z-10">
+      <main className="max-w-6xl mx-auto px-6 py-10 relative z-10">
         {/* Loading overlay */}
         {isLoading && step !== 'unboxing' && (
           <div className="flex items-center justify-center py-20">
@@ -234,73 +234,90 @@ export default function App() {
         )}
 
         {(step === 'plan' || step === 'executed' || step === 'planb') && plan && (
-          <div className="stagger space-y-8">
-            <BlindBoxCard blindBox={plan.blindBox} requirements={plan.requirements} />
+          <div className="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)] items-start">
+            <aside className="lg:sticky lg:top-24 space-y-4">
+              <ToolStatusPanel toolStatus={plan.toolStatus} plan={plan} />
 
-            <RouteTimeline route={plan.route} />
+              {step === 'plan' && (
+                <div className="magic-card p-4">
+                  <p className="text-xs font-semibold text-purple-950 mb-3">路线变更模拟</p>
+                  <div className="grid gap-2">
+                    <button
+                      onClick={() => handleTriggerPlanB({
+                        type: 'queue',
+                        poiId: plan.route.steps.find((s) => s.poi.type === '餐饮正餐')?.poi.id,
+                        waitMinutes: 45,
+                        message: '餐饮点当前排队约45分钟',
+                      })}
+                      disabled={isLoading}
+                      className="w-full rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-3 text-left text-sm font-semibold text-amber-700
+                               hover:bg-amber-100 hover:border-amber-300 transition-all disabled:opacity-50"
+                    >
+                      <span className="flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        排队过长
+                      </span>
+                      <span className="block mt-1 text-xs font-normal text-amber-600/80">进入路线调整页</span>
+                    </button>
 
-            {step === 'executed' && plan.executionTasks && (
-              <ExecutionPanel tasks={plan.executionTasks} />
-            )}
+                    <button
+                      onClick={() => handleTriggerPlanB({
+                        type: 'rain',
+                        message: '当前开始下雨，户外点体验不稳定',
+                      })}
+                      disabled={isLoading}
+                      className="w-full rounded-xl border border-sky-200 bg-sky-50/80 px-3 py-3 text-left text-sm font-semibold text-sky-700
+                               hover:bg-sky-100 hover:border-sky-300 transition-all disabled:opacity-50"
+                    >
+                      <span className="flex items-center gap-2">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-4.34-7.41 3 3 0 10-6.28.81A3.988 3.988 0 003 15z" />
+                        </svg>
+                        天气变化
+                      </span>
+                      <span className="block mt-1 text-xs font-normal text-sky-600/80">进入路线调整页</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </aside>
 
-            <ToolStatusPanel toolStatus={plan.toolStatus} plan={plan} />
+            {step !== 'planb' && (
+              <section className="stagger space-y-6">
+                <BlindBoxCard blindBox={plan.blindBox} requirements={plan.requirements} />
+                <RouteTimeline route={plan.route} />
 
-            {step === 'plan' && (
-              <div className="flex gap-3 flex-wrap">
-                <button
-                  onClick={handleExecute}
-                  disabled={isLoading}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold
-                           hover:shadow-lg hover:shadow-purple-500/30 hover:-translate-y-0.5
-                           transition-all duration-200 flex items-center gap-2 animate-slide-up
-                           disabled:opacity-50 disabled:cursor-not-allowed"
-                  style={{ animationDelay: '0.4s' }}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  一键执行
-                </button>
+                {step === 'plan' && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={handleExecute}
+                      disabled={isLoading}
+                      className="px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold
+                               hover:shadow-lg hover:shadow-purple-500/30 hover:-translate-y-0.5
+                               transition-all duration-200 flex items-center gap-2 animate-slide-up
+                               disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{ animationDelay: '0.4s' }}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      一键执行
+                    </button>
+                  </div>
+                )}
 
-                <button
-                  onClick={() => handleTriggerPlanB({
-                    type: 'queue',
-                    poiId: plan.route.steps.find((s) => s.poi.type === '餐饮正餐')?.poi.id,
-                    waitMinutes: 45,
-                    message: '餐饮点当前排队约45分钟',
-                  })}
-                  disabled={isLoading}
-                  className="px-6 py-3 border-2 border-gold/60 text-gold-dark rounded-xl font-semibold
-                           hover:bg-gold-soft hover:border-gold transition-all duration-200
-                           flex items-center gap-2 animate-slide-up disabled:opacity-50"
-                  style={{ animationDelay: '0.45s' }}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  触发排队 Plan B
-                </button>
-                <button
-                  onClick={() => handleTriggerPlanB({
-                    type: 'rain',
-                    message: '当前开始下雨，户外点体验不稳定',
-                  })}
-                  disabled={isLoading}
-                  className="px-6 py-3 border-2 border-purple-300 text-purple-500 rounded-xl font-semibold
-                           hover:bg-purple-50 hover:border-purple-400 transition-all duration-200
-                           flex items-center gap-2 animate-slide-up disabled:opacity-50"
-                  style={{ animationDelay: '0.5s' }}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-4.34-7.41 3 3 0 10-6.28.81A3.988 3.988 0 003 15z" />
-                  </svg>
-                  触发下雨 Plan B
-                </button>
-              </div>
+                {step === 'executed' && plan.executionTasks && (
+                  <ExecutionPanel tasks={plan.executionTasks} />
+                )}
+              </section>
             )}
 
             {step === 'planb' && plan.planB && (
-              <PlanBComparison planB={plan.planB} />
+              <section className="animate-slide-up">
+                <PlanBComparison planB={plan.planB} />
+              </section>
             )}
           </div>
         )}
