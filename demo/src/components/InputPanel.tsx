@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { LlmReplanConfig } from '../types';
 
 const QUICK_CHIPS = [
   { label: '朋友出行', key: 'peopleType', value: '朋友' },
@@ -27,10 +28,13 @@ const MOCK_SUGGESTIONS = [
 interface Props {
   onSubmit: (rawText: string) => void;
   isLoading: boolean;
+  llmConfig: LlmReplanConfig;
+  onLlmConfigChange: (config: LlmReplanConfig) => void;
 }
 
-export default function InputPanel({ onSubmit, isLoading }: Props) {
+export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfigChange }: Props) {
   const [rawText, setRawText] = useState('');
+  const [showModelConfig, setShowModelConfig] = useState(false);
   const [placeholder] = useState(() => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]);
 
   const handleSubmit = () => {
@@ -141,6 +145,66 @@ export default function InputPanel({ onSubmit, isLoading }: Props) {
                   )}
                 </button>
               </div>
+            </div>
+
+            <div className="mt-4 rounded-[1.35rem] border border-purple-100 bg-white/58 p-4 shadow-sm backdrop-blur">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-purple-100 text-purple-700">
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c.251.023.501.05.75.082m-.75-.082a24.301 24.301 0 00-4.5 0m4.5 0v.001M15 11.25l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                  </span>
+                  <div>
+                    <p className="text-sm font-extrabold text-purple-950">大模型判断已配置</p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-purple-600/78">
+                      默认使用 DeepSeek，API Key 在后端隐藏保存；需要更换时可在这里覆盖。
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowModelConfig((value) => !value)}
+                  className="inline-flex items-center justify-center rounded-full border border-purple-200 bg-white/78 px-4 py-2 text-xs font-extrabold text-purple-700 transition hover:-translate-y-0.5 hover:bg-purple-50"
+                >
+                  {showModelConfig ? '收起配置' : '更换 API Key'}
+                </button>
+              </div>
+
+              {showModelConfig && (
+                <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_minmax(0,0.8fr)]">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold text-purple-500">API Key</span>
+                    <input
+                      type="password"
+                      value={llmConfig.apiKey ?? ''}
+                      onChange={(event) => onLlmConfigChange({ ...llmConfig, apiKey: event.target.value })}
+                      placeholder="默认 Key 已隐藏，输入后覆盖"
+                      className="w-full rounded-2xl border border-purple-100 bg-white/88 px-4 py-3 text-sm font-semibold text-purple-950 outline-none transition focus:border-purple-400 focus:ring-4 focus:ring-purple-500/10"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold text-purple-500">Base URL</span>
+                    <input
+                      type="text"
+                      value={llmConfig.baseUrl ?? ''}
+                      onChange={(event) => onLlmConfigChange({ ...llmConfig, baseUrl: event.target.value })}
+                      placeholder="https://api.deepseek.com/v1"
+                      className="w-full rounded-2xl border border-purple-100 bg-white/88 px-4 py-3 text-sm font-semibold text-purple-950 outline-none transition focus:border-purple-400 focus:ring-4 focus:ring-purple-500/10"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-bold text-purple-500">Model</span>
+                    <input
+                      type="text"
+                      value={llmConfig.model ?? ''}
+                      onChange={(event) => onLlmConfigChange({ ...llmConfig, model: event.target.value })}
+                      placeholder="deepseek-chat"
+                      className="w-full rounded-2xl border border-purple-100 bg-white/88 px-4 py-3 text-sm font-semibold text-purple-950 outline-none transition focus:border-purple-400 focus:ring-4 focus:ring-purple-500/10"
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="mt-5 flex flex-wrap justify-center gap-2.5">

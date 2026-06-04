@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import type { Plan, AppStep } from './types';
+import type { Plan, AppStep, LlmReplanConfig } from './types';
 import InputPanel from './components/InputPanel';
 import GiftBoxAnimation from './components/GiftBoxAnimation';
 import RibbonsBackground from './components/RibbonsBackground';
@@ -34,11 +34,11 @@ const API = {
     return res.json();
   },
 
-  async handleReplan(event: Record<string, unknown>, plan: Plan): Promise<Plan> {
+  async handleReplan(event: Record<string, unknown>, plan: Plan, llmConfig?: LlmReplanConfig): Promise<Plan> {
     const res = await fetch('/api/replan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event, plan }),
+      body: JSON.stringify({ event, plan, llmConfig }),
     });
     if (!res.ok) throw new Error(`Server error: ${res.status}`);
     return res.json();
@@ -51,6 +51,10 @@ export default function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [llmConfig, setLlmConfig] = useState<LlmReplanConfig>({
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+  });
 
   // Push current state to history before navigating
   const pushHistory = useCallback((currentStep: AppStep, currentPlan: Plan | null) => {
@@ -119,13 +123,13 @@ export default function App() {
     }
   }, [plan, step, navigateTo]);
 
-  const handleTriggerPlanB = useCallback(async (event: Record<string, unknown>, nextStep: AppStep = 'planb') => {
+  const handleTriggerPlanB = useCallback(async (event: Record<string, unknown>, nextStep: AppStep = 'planb', llmConfig?: LlmReplanConfig) => {
     if (!plan) return;
     setIsLoading(true);
     setError(null);
 
     try {
-      const replanned = await API.handleReplan(event, plan);
+      const replanned = await API.handleReplan(event, plan, llmConfig);
       navigateTo(nextStep, replanned, step, plan);
     } catch (err) {
       setError(err instanceof Error ? err.message : '发生未知错误');
@@ -221,7 +225,12 @@ export default function App() {
         )}
 
         {step === 'input' && !isLoading && (
-          <InputPanel onSubmit={handleGenerate} isLoading={isLoading} />
+          <InputPanel
+            onSubmit={handleGenerate}
+            isLoading={isLoading}
+            llmConfig={llmConfig}
+            onLlmConfigChange={setLlmConfig}
+          />
         )}
 
         {step === 'unboxing' && plan && (
@@ -290,6 +299,7 @@ export default function App() {
             <RouteReviewPanel
               plan={plan}
               isLoading={isLoading}
+              llmConfig={llmConfig}
               onConfirm={handleExecute}
               onReplaceRoute={async () => {
                 const target = plan.route.steps.find((routeStep) => routeStep.role === 'activity') ?? plan.route.steps[0];
@@ -300,12 +310,17 @@ export default function App() {
                   message: '用户不满意当前路线，希望先替换核心节点并重新规划',
                 }, 'review');
               }}
-              onReplaceStep={async (routeStep) => {
+              onReplaceStep={async (routeStep, candidateName, llmConfig, customPrompt) => {
                 await handleTriggerPlanB({
                   type: 'unavailable',
                   poiId: routeStep.poi.id,
-                  message: `用户希望更换「${routeStep.poi.name}」这个节点`,
-                }, 'review');
+                  message: [
+                    candidateName
+                      ? `用户希望将「${routeStep.poi.name}」替换为「${candidateName}」`
+                      : `用户希望更换「${routeStep.poi.name}」这个节点`,
+                    customPrompt?.trim() ? `用户补充偏好：${customPrompt.trim()}` : '',
+                  ].filter(Boolean).join('；'),
+                }, 'review', llmConfig);
               }}
             />
           </section>

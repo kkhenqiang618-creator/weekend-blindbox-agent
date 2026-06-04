@@ -99,4 +99,10 @@ export interface UserInput {
   quickSelections: Record<string, unknown>;
 }
 
+export interface LlmReplanConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
 export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'review' | 'executed' | 'planb';

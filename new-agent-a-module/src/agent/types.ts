@@ -109,6 +109,12 @@ export interface ReplanEvent {
   message?: string;
 }
 
+export interface LlmReplanConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
 export interface PlanBChange {
   action: "replace" | "shorten" | "remove";
   from?: string;

@@ -77,12 +77,28 @@ async function handleExecutePlan(req, res) {
 async function handleReplanRoute(req, res) {
   try {
     const body = await parseBody(req);
-    const replanned = await handleReplan(body.event, body.plan, { pois });
+    const replanned = await handleReplan(body.event, body.plan, {
+      pois,
+      llm: sanitizeLlmConfig(body.llmConfig),
+    });
     jsonResponse(res, 200, replanned);
   } catch (err) {
     console.error('handleReplan error:', err);
     jsonResponse(res, 500, { error: err.message });
   }
+}
+
+function sanitizeLlmConfig(config) {
+  if (!config || typeof config !== 'object') return undefined;
+  const apiKey = typeof config.apiKey === 'string' ? config.apiKey.trim() : '';
+  const baseUrl = typeof config.baseUrl === 'string' ? config.baseUrl.trim() : '';
+  const model = typeof config.model === 'string' ? config.model.trim() : '';
+  if (!apiKey && !baseUrl && !model) return undefined;
+  return {
+    apiKey: apiKey || undefined,
+    baseUrl: baseUrl || undefined,
+    model: model || undefined,
+  };
 }
 
 const server = http.createServer(async (req, res) => {

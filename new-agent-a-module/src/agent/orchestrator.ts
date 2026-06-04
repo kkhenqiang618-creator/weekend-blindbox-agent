@@ -1,8 +1,9 @@
 import { composeBlindBox, selectBlindBoxTheme } from "./blindBox.ts";
 import { parseIntent } from "./intentParser.ts";
-import type { Plan, Poi, ReplanEvent, UserInput } from "./types.ts";
+import type { LlmReplanConfig, Plan, Poi, ReplanEvent, UserInput } from "./types.ts";
 import { mockPois } from "../mock/mockPois.ts";
 import { buildRoute, replanRoute } from "../planner/simpleRoutePlanner.ts";
+import { replanRouteWithLLM } from "../planner/llmReplanPlanner.ts";
 import { checkAvailability } from "../tools/checkAvailability.ts";
 import { checkQueue } from "../tools/checkQueue.ts";
 import { reserveOrJoinPlan } from "../tools/reserveOrJoinPlan.ts";
@@ -14,6 +15,7 @@ export interface GeneratePlanOptions {
 
 export interface ReplanOptions {
   pois?: Poi[];
+  llm?: LlmReplanConfig;
 }
 
 export async function generatePlan(
@@ -56,7 +58,15 @@ export async function handleReplan(
   options: ReplanOptions = {}
 ): Promise<Plan> {
   const pois = options.pois ?? mockPois;
-  const planB = replanRoute(event, currentPlan.route, pois, currentPlan.requirements);
+  let planB = null;
+  try {
+    planB = await replanRouteWithLLM(event, currentPlan.route, pois, currentPlan.requirements, options.llm);
+  } catch {
+    planB = null;
+  }
+  if (!planB) {
+    planB = replanRoute(event, currentPlan.route, pois, currentPlan.requirements);
+  }
   const [queueResults, availabilityResults] = await Promise.all([
     checkQueue(planB.afterRoute),
     checkAvailability(planB.afterRoute)
