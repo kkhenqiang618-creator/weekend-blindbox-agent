@@ -234,21 +234,53 @@ export default function App() {
         )}
 
         {step === 'plan' && plan && (
-          <section className="mx-auto max-w-4xl space-y-6 animate-slide-up">
+          <section className="mx-auto max-w-5xl space-y-5 animate-slide-up">
             <RouteTimeline route={plan.route} />
-            <div className="flex justify-end">
-              <button
-                onClick={() => navigateTo('review', plan, 'plan', plan)}
-                disabled={isLoading}
-                className="px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold
-                         hover:shadow-lg hover:shadow-purple-500/30 hover:-translate-y-0.5
-                         transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                下一步：确认路线
-              </button>
+            <div className="rounded-[1.5rem] border border-white/60 bg-white/70 p-4 shadow-[0_18px_54px_rgba(91,33,182,0.12)] backdrop-blur-xl">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-extrabold text-purple-950">这条路线先收进盲盒结果</p>
+                  <p className="mt-1 text-xs font-semibold text-purple-500">满意就让 Agent 进入预订辅助；不满意可以进入下一页调整路线。</p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <button
+                    onClick={handleReset}
+                    disabled={isLoading}
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-purple-200 bg-white/70 px-5 py-3 text-sm font-bold text-purple-700
+                             transition-all duration-200 hover:-translate-y-0.5 hover:border-purple-300 hover:bg-purple-50 hover:shadow-md
+                             disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    重新生成
+                  </button>
+                  <button
+                    onClick={() => navigateTo('review', plan, 'plan', plan)}
+                    disabled={isLoading}
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-amber-200 bg-amber-50/80 px-5 py-3 text-sm font-bold text-amber-700
+                             transition-all duration-200 hover:-translate-y-0.5 hover:bg-amber-100 hover:shadow-md
+                             disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m12 14a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                    调整需求
+                  </button>
+                  <button
+                    onClick={handleExecute}
+                    disabled={isLoading}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-purple-600 via-purple-700 to-purple-900 px-6 py-3 text-sm font-extrabold text-white
+                             shadow-[0_14px_30px_rgba(124,58,237,0.32)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_38px_rgba(124,58,237,0.42)]
+                             disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0"
+                  >
+                    确认路线
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             </div>
           </section>
         )}
