@@ -24,11 +24,15 @@ export async function replanRouteWithLLM(
   requirements: Requirements,
   config: LlmReplanConfig = {}
 ): Promise<PlanBResult | null> {
-  const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-
   const targetStep = findTargetStep(event, currentRoute);
   if (!targetStep) return null;
+
+  if (event.preferredReplacement && !event.customPreference?.trim()) {
+    return buildExactReplacementResult(event, currentRoute, pois, requirements, targetStep);
+  }
+
+  const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
 
   const candidates = buildCandidatePool(event, targetStep, currentRoute, pois, requirements);
   if (candidates.length === 0) return null;
@@ -172,6 +176,83 @@ function buildCandidatePool(
     .filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120));
 
   return uniquePois([...direct, ...sameType, ...broad]).slice(0, 24);
+}
+
+function buildExactReplacementResult(
+  event: ReplanEvent,
+  currentRoute: Route,
+  pois: Poi[],
+  requirements: Requirements,
+  targetStep: RouteStep
+): PlanBResult | null {
+  const replacement = resolvePreferredReplacement(event, pois, requirements);
+  if (!replacement) return null;
+
+  const reason = event.preferredReplacement?.reason || `${replacement.name} 是用户选中的替代节点，已按选择更新路线。`;
+  const afterSteps = currentRoute.steps.map((step) => {
+    if (step.poi.id !== targetStep.poi.id) return step;
+    return {
+      ...step,
+      poi: replacement,
+      note: `${reason}（用户确认替换）`,
+    };
+  });
+
+  const afterRoute = summarizeRoute(afterSteps);
+  const changes: PlanBChange[] = [{
+    action: "replace",
+    from: targetStep.poi.name,
+    to: replacement.name,
+    reason,
+  }];
+
+  return {
+    event,
+    impact: `已按你的选择，将「${targetStep.poi.name}」替换为「${replacement.name}」。`,
+    beforeRoute: currentRoute,
+    afterRoute,
+    changes,
+    keptPreferences: requirements.preferences.slice(0, 3),
+    sacrificed: [targetStep.poi.name],
+    message: `已按用户点选结果，将「${targetStep.poi.name}」替换为「${replacement.name}」。`,
+  };
+}
+
+function resolvePreferredReplacement(event: ReplanEvent, pois: Poi[], requirements: Requirements): Poi | null {
+  const preferred = event.preferredReplacement;
+  if (!preferred?.name) return null;
+
+  const normalizedName = normalizeName(preferred.name);
+  const matchedPoi = pois.find((poi) =>
+    normalizeName(poi.name) === normalizedName
+    || normalizeName(poi.name).includes(normalizedName)
+    || normalizedName.includes(normalizeName(poi.name))
+  );
+  if (matchedPoi) return matchedPoi;
+
+  return {
+    id: preferred.id || `manual-${Date.now()}`,
+    name: preferred.name,
+    type: preferred.type || "休闲娱乐",
+    subType: preferred.subType || preferred.type || "用户选择",
+    area: preferred.area,
+    businessDistrict: preferred.businessDistrict || preferred.area || requirements.city,
+    price: preferred.price ?? 0,
+    meituanRating: 4.6,
+    reviewCount: 1200,
+    tags: preferred.tags ?? [],
+    limits: [],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: preferred.stayMinutes ?? 60,
+    queueLevel: "low",
+    distanceLevel: "medium",
+    reason: preferred.reason || `${preferred.name} 是用户确认选择的替代节点。`,
+    weatherSensitive: false,
+  };
+}
+
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "");
 }
 
 function findTargetStep(event: ReplanEvent, currentRoute: Route): RouteStep | undefined {

@@ -107,6 +107,19 @@ export interface ReplanEvent {
   waitMinutes?: number;
   delayMinutes?: number;
   message?: string;
+  customPreference?: string;
+  preferredReplacement?: {
+    id?: string;
+    name: string;
+    type?: string;
+    subType?: string;
+    area?: string;
+    businessDistrict?: string;
+    price?: number;
+    stayMinutes?: number;
+    reason?: string;
+    tags?: string[];
+  };
 }
 
 export interface LlmReplanConfig {

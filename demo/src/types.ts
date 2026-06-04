@@ -62,7 +62,25 @@ export interface PlanBChange {
 }
 
 export interface PlanBResult {
-  event: { type: string; poiId?: string; waitMinutes?: number; message?: string };
+  event: {
+    type: string;
+    poiId?: string;
+    waitMinutes?: number;
+    message?: string;
+    customPreference?: string;
+    preferredReplacement?: {
+      id?: string;
+      name: string;
+      type?: string;
+      subType?: string;
+      area?: string;
+      businessDistrict?: string;
+      price?: number;
+      stayMinutes?: number;
+      reason?: string;
+      tags?: string[];
+    };
+  };
   impact: string;
   beforeRoute: Route;
   afterRoute: Route;

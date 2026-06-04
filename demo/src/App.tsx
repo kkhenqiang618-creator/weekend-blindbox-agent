@@ -310,15 +310,30 @@ export default function App() {
                   message: '用户不满意当前路线，希望先替换核心节点并重新规划',
                 }, 'review');
               }}
-              onReplaceStep={async (routeStep, candidateName, llmConfig, customPrompt) => {
+              onReplaceStep={async (routeStep, candidate, llmConfig, customPrompt) => {
+                const trimmedPrompt = customPrompt?.trim() ?? '';
                 await handleTriggerPlanB({
                   type: 'unavailable',
                   poiId: routeStep.poi.id,
+                  customPreference: trimmedPrompt || undefined,
+                  preferredReplacement: candidate
+                    ? {
+                        id: candidate.id,
+                        name: candidate.name,
+                        type: candidate.type,
+                        area: candidate.area,
+                        businessDistrict: candidate.area,
+                        price: candidate.price,
+                        stayMinutes: candidate.stayMinutes,
+                        reason: candidate.reason,
+                        tags: candidate.tags,
+                      }
+                    : undefined,
                   message: [
-                    candidateName
-                      ? `用户希望将「${routeStep.poi.name}」替换为「${candidateName}」`
+                    candidate
+                      ? `用户希望将「${routeStep.poi.name}」替换为「${candidate.name}」`
                       : `用户希望更换「${routeStep.poi.name}」这个节点`,
-                    customPrompt?.trim() ? `用户补充偏好：${customPrompt.trim()}` : '',
+                    trimmedPrompt ? `用户补充偏好：${trimmedPrompt}` : '',
                   ].filter(Boolean).join('；'),
                 }, 'review', llmConfig);
               }}

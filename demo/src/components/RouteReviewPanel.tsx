@@ -7,7 +7,7 @@ interface Props {
   llmConfig: LlmReplanConfig;
   onConfirm: () => void;
   onReplaceRoute: () => void;
-  onReplaceStep: (step: RouteStep, candidateName?: string, llmConfig?: LlmReplanConfig, customPrompt?: string) => void;
+  onReplaceStep: (step: RouteStep, candidate?: ReplacementCandidate, llmConfig?: LlmReplanConfig, customPrompt?: string) => void;
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -560,7 +560,7 @@ export default function RouteReviewPanel({
             setSelectedCandidateId('');
             setCustomReplacementPrompt('');
           }}
-          onConfirm={(candidate, config, prompt) => onReplaceStep(pendingConfirmStep, candidate.name, config, prompt)}
+          onConfirm={(candidate, config, prompt) => onReplaceStep(pendingConfirmStep, candidate, config, prompt)}
         />
       )}
 

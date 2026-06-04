@@ -116,6 +116,37 @@ export function replanRoute(
     return buildPlanBResult(event, currentRoute, afterRoute, changes, requirements, "上一站停留超时，可能压缩后续行程。");
   }
 
+  if (event.preferredReplacement && !event.customPreference?.trim()) {
+    const exactReplacement = resolvePreferredReplacement(event, pois, requirements);
+    if (exactReplacement) {
+      const reason = event.preferredReplacement.reason || `${exactReplacement.name} 是用户选中的替代节点，已按选择更新路线。`;
+      const afterSteps = currentRoute.steps.map((step) => {
+        if (step.poi.id !== targetStep.poi.id) return step;
+        return {
+          ...step,
+          poi: exactReplacement,
+          note: `${reason}（用户确认替换）`
+        };
+      });
+      const afterRoute = summarizeRoute(afterSteps);
+      changes.push({
+        action: "replace",
+        from: targetStep.poi.name,
+        to: exactReplacement.name,
+        reason
+      });
+
+      return buildPlanBResult(
+        event,
+        currentRoute,
+        afterRoute,
+        changes,
+        requirements,
+        `已按你的选择，将「${targetStep.poi.name}」替换为「${exactReplacement.name}」。`
+      );
+    }
+  }
+
   const replacement = findReplacement(event, targetStep.poi, pois, requirements, currentRoute);
   if (!replacement) {
     return {
@@ -154,6 +185,43 @@ export function replanRoute(
     requirements,
     buildImpact(event, targetStep.poi.name)
   );
+}
+
+function resolvePreferredReplacement(event: ReplanEvent, pois: Poi[], requirements: Requirements): Poi | null {
+  const preferred = event.preferredReplacement;
+  if (!preferred?.name) return null;
+
+  const normalizedName = normalizeName(preferred.name);
+  const matchedPoi = pois.find((poi) =>
+    normalizeName(poi.name) === normalizedName
+    || normalizeName(poi.name).includes(normalizedName)
+    || normalizedName.includes(normalizeName(poi.name))
+  );
+  if (matchedPoi) return matchedPoi;
+
+  return {
+    id: preferred.id || `manual-${Date.now()}`,
+    name: preferred.name,
+    type: preferred.type || "休闲娱乐",
+    subType: preferred.subType || preferred.type || "用户选择",
+    area: preferred.area,
+    businessDistrict: preferred.businessDistrict || preferred.area || requirements.city,
+    price: preferred.price ?? 0,
+    meituanRating: 4.6,
+    reviewCount: 1200,
+    tags: preferred.tags ?? [],
+    limits: [],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: preferred.stayMinutes ?? 60,
+    queueLevel: "low",
+    distanceLevel: "medium",
+    reason: preferred.reason || `${preferred.name} 是用户确认选择的替代节点。`,
+    weatherSensitive: false
+  };
+}
+
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "");
 }
 
 function pickFirst(candidates: Poi[], types: string[], excludedIds: Array<string | undefined> = []): Poi | undefined {

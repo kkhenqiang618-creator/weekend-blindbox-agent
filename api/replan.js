@@ -331,6 +331,35 @@ function replanRoute(event, currentRoute, pois2, requirements) {
     const afterRoute2 = summarizeRoute(afterSteps2);
     return buildPlanBResult(event, currentRoute, afterRoute2, changes, requirements, "\u4E0A\u4E00\u7AD9\u505C\u7559\u8D85\u65F6\uFF0C\u53EF\u80FD\u538B\u7F29\u540E\u7EED\u884C\u7A0B\u3002");
   }
+  if (event.preferredReplacement && !event.customPreference?.trim()) {
+    const exactReplacement = resolvePreferredReplacement(event, pois2, requirements);
+    if (exactReplacement) {
+      const reason = event.preferredReplacement.reason || `${exactReplacement.name} \u662F\u7528\u6237\u9009\u4E2D\u7684\u66FF\u4EE3\u8282\u70B9\uFF0C\u5DF2\u6309\u9009\u62E9\u66F4\u65B0\u8DEF\u7EBF\u3002`;
+      const afterSteps2 = currentRoute.steps.map((step) => {
+        if (step.poi.id !== targetStep.poi.id) return step;
+        return {
+          ...step,
+          poi: exactReplacement,
+          note: `${reason}\uFF08\u7528\u6237\u786E\u8BA4\u66FF\u6362\uFF09`
+        };
+      });
+      const afterRoute2 = summarizeRoute(afterSteps2);
+      changes.push({
+        action: "replace",
+        from: targetStep.poi.name,
+        to: exactReplacement.name,
+        reason
+      });
+      return buildPlanBResult(
+        event,
+        currentRoute,
+        afterRoute2,
+        changes,
+        requirements,
+        `\u5DF2\u6309\u4F60\u7684\u9009\u62E9\uFF0C\u5C06\u300C${targetStep.poi.name}\u300D\u66FF\u6362\u4E3A\u300C${exactReplacement.name}\u300D\u3002`
+      );
+    }
+  }
   const replacement = findReplacement(event, targetStep.poi, pois2, requirements, currentRoute);
   if (!replacement) {
     return {
@@ -367,6 +396,37 @@ function replanRoute(event, currentRoute, pois2, requirements) {
     requirements,
     buildImpact(event, targetStep.poi.name)
   );
+}
+function resolvePreferredReplacement(event, pois2, requirements) {
+  const preferred = event.preferredReplacement;
+  if (!preferred?.name) return null;
+  const normalizedName = normalizeName(preferred.name);
+  const matchedPoi = pois2.find(
+    (poi) => normalizeName(poi.name) === normalizedName || normalizeName(poi.name).includes(normalizedName) || normalizedName.includes(normalizeName(poi.name))
+  );
+  if (matchedPoi) return matchedPoi;
+  return {
+    id: preferred.id || `manual-${Date.now()}`,
+    name: preferred.name,
+    type: preferred.type || "\u4F11\u95F2\u5A31\u4E50",
+    subType: preferred.subType || preferred.type || "\u7528\u6237\u9009\u62E9",
+    area: preferred.area,
+    businessDistrict: preferred.businessDistrict || preferred.area || requirements.city,
+    price: preferred.price ?? 0,
+    meituanRating: 4.6,
+    reviewCount: 1200,
+    tags: preferred.tags ?? [],
+    limits: [],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: preferred.stayMinutes ?? 60,
+    queueLevel: "low",
+    distanceLevel: "medium",
+    reason: preferred.reason || `${preferred.name} \u662F\u7528\u6237\u786E\u8BA4\u9009\u62E9\u7684\u66FF\u4EE3\u8282\u70B9\u3002`,
+    weatherSensitive: false
+  };
+}
+function normalizeName(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, "");
 }
 function summarizeRoute(steps) {
   return {
@@ -477,10 +537,13 @@ function buildPlanBResult(event, beforeRoute, afterRoute, changes, requirements,
 var DEFAULT_MODEL = "deepseek-chat";
 var DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
 async function replanRouteWithLLM(event, currentRoute, pois2, requirements, config = {}) {
-  const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
   const targetStep = findTargetStep2(event, currentRoute);
   if (!targetStep) return null;
+  if (event.preferredReplacement && !event.customPreference?.trim()) {
+    return buildExactReplacementResult(event, currentRoute, pois2, requirements, targetStep);
+  }
+  const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
   const candidates = buildCandidatePool(event, targetStep, currentRoute, pois2, requirements);
   if (candidates.length === 0) return null;
   const baseUrl = config.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
@@ -591,6 +654,67 @@ function buildCandidatePool(event, targetStep, currentRoute, pois2, requirements
   });
   const broad = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120));
   return uniquePois([...direct, ...sameType, ...broad]).slice(0, 24);
+}
+function buildExactReplacementResult(event, currentRoute, pois2, requirements, targetStep) {
+  const replacement = resolvePreferredReplacement2(event, pois2, requirements);
+  if (!replacement) return null;
+  const reason = event.preferredReplacement?.reason || `${replacement.name} \u662F\u7528\u6237\u9009\u4E2D\u7684\u66FF\u4EE3\u8282\u70B9\uFF0C\u5DF2\u6309\u9009\u62E9\u66F4\u65B0\u8DEF\u7EBF\u3002`;
+  const afterSteps = currentRoute.steps.map((step) => {
+    if (step.poi.id !== targetStep.poi.id) return step;
+    return {
+      ...step,
+      poi: replacement,
+      note: `${reason}\uFF08\u7528\u6237\u786E\u8BA4\u66FF\u6362\uFF09`
+    };
+  });
+  const afterRoute = summarizeRoute2(afterSteps);
+  const changes = [{
+    action: "replace",
+    from: targetStep.poi.name,
+    to: replacement.name,
+    reason
+  }];
+  return {
+    event,
+    impact: `\u5DF2\u6309\u4F60\u7684\u9009\u62E9\uFF0C\u5C06\u300C${targetStep.poi.name}\u300D\u66FF\u6362\u4E3A\u300C${replacement.name}\u300D\u3002`,
+    beforeRoute: currentRoute,
+    afterRoute,
+    changes,
+    keptPreferences: requirements.preferences.slice(0, 3),
+    sacrificed: [targetStep.poi.name],
+    message: `\u5DF2\u6309\u7528\u6237\u70B9\u9009\u7ED3\u679C\uFF0C\u5C06\u300C${targetStep.poi.name}\u300D\u66FF\u6362\u4E3A\u300C${replacement.name}\u300D\u3002`
+  };
+}
+function resolvePreferredReplacement2(event, pois2, requirements) {
+  const preferred = event.preferredReplacement;
+  if (!preferred?.name) return null;
+  const normalizedName = normalizeName2(preferred.name);
+  const matchedPoi = pois2.find(
+    (poi) => normalizeName2(poi.name) === normalizedName || normalizeName2(poi.name).includes(normalizedName) || normalizedName.includes(normalizeName2(poi.name))
+  );
+  if (matchedPoi) return matchedPoi;
+  return {
+    id: preferred.id || `manual-${Date.now()}`,
+    name: preferred.name,
+    type: preferred.type || "\u4F11\u95F2\u5A31\u4E50",
+    subType: preferred.subType || preferred.type || "\u7528\u6237\u9009\u62E9",
+    area: preferred.area,
+    businessDistrict: preferred.businessDistrict || preferred.area || requirements.city,
+    price: preferred.price ?? 0,
+    meituanRating: 4.6,
+    reviewCount: 1200,
+    tags: preferred.tags ?? [],
+    limits: [],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: preferred.stayMinutes ?? 60,
+    queueLevel: "low",
+    distanceLevel: "medium",
+    reason: preferred.reason || `${preferred.name} \u662F\u7528\u6237\u786E\u8BA4\u9009\u62E9\u7684\u66FF\u4EE3\u8282\u70B9\u3002`,
+    weatherSensitive: false
+  };
+}
+function normalizeName2(name) {
+  return name.trim().toLowerCase().replace(/\s+/g, "");
 }
 function findTargetStep2(event, currentRoute) {
   if (event.poiId) return currentRoute.steps.find((step) => step.poi.id === event.poiId);
