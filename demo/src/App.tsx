@@ -293,8 +293,8 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-purple-100 py-6 mt-12 bg-white/50">
-        <p className="text-center text-sm text-purple-300">Weekend Buddy · 周末盲盒 Demo</p>
+      <footer className="py-6 mt-10">
+        <p className="text-center text-xs font-medium tracking-wide text-purple-300/70">Weekend Buddy · 周末盲盒 Demo</p>
       </footer>
     </div>
   );
