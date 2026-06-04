@@ -8,6 +8,7 @@ import RouteTimeline from './components/RouteTimeline';
 import ToolStatusPanel from './components/ToolStatusPanel';
 import PlanBComparison from './components/PlanBComparison';
 import ExecutionPanel from './components/ExecutionPanel';
+import RouteReviewPanel from './components/RouteReviewPanel';
 
 interface HistoryEntry {
   step: AppStep;
@@ -112,28 +113,28 @@ export default function App() {
 
     try {
       const executed = await API.executePlan(plan);
-      navigateTo('executed', executed, 'plan', plan);
+      navigateTo('executed', executed, step, plan);
     } catch (err) {
       setError(err instanceof Error ? err.message : '发生未知错误');
     } finally {
       setIsLoading(false);
     }
-  }, [plan, navigateTo]);
+  }, [plan, step, navigateTo]);
 
-  const handleTriggerPlanB = useCallback(async (event: Record<string, unknown>) => {
+  const handleTriggerPlanB = useCallback(async (event: Record<string, unknown>, nextStep: AppStep = 'planb') => {
     if (!plan) return;
     setIsLoading(true);
     setError(null);
 
     try {
       const replanned = await API.handleReplan(event, plan);
-      navigateTo('planb', replanned, 'plan', plan);
+      navigateTo(nextStep, replanned, step, plan);
     } catch (err) {
       setError(err instanceof Error ? err.message : '发生未知错误');
     } finally {
       setIsLoading(false);
     }
-  }, [plan, navigateTo]);
+  }, [plan, step, navigateTo]);
 
   const handleReset = useCallback(() => {
     setStep('input');
@@ -151,6 +152,7 @@ export default function App() {
       'input': '返回首页',
       'unboxing': '返回',
       'plan': '返回路线',
+      'review': '返回确认',
       'executed': '撤回执行',
       'planb': '返回路线',
     };
@@ -233,7 +235,7 @@ export default function App() {
           />
         )}
 
-        {(step === 'plan' || step === 'executed' || step === 'planb') && plan && (
+        {(step === 'plan' || step === 'review' || step === 'executed' || step === 'planb') && plan && (
           <div className="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)] items-start">
             <aside className="lg:sticky lg:top-24 space-y-4">
               <ToolStatusPanel toolStatus={plan.toolStatus} plan={plan} />
@@ -284,7 +286,7 @@ export default function App() {
               )}
             </aside>
 
-            {step !== 'planb' && (
+            {step !== 'planb' && step !== 'review' && (
               <section className="stagger space-y-6">
                 <BlindBoxCard blindBox={plan.blindBox} requirements={plan.requirements} />
                 <RouteTimeline route={plan.route} />
@@ -292,7 +294,7 @@ export default function App() {
                 {step === 'plan' && (
                   <div className="flex justify-end">
                     <button
-                      onClick={handleExecute}
+                      onClick={() => navigateTo('review', plan, 'plan', plan)}
                       disabled={isLoading}
                       className="px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 text-white rounded-xl font-semibold
                                hover:shadow-lg hover:shadow-purple-500/30 hover:-translate-y-0.5
@@ -303,7 +305,7 @@ export default function App() {
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
-                      一键执行
+                      下一步：确认路线
                     </button>
                   </div>
                 )}
@@ -311,6 +313,34 @@ export default function App() {
                 {step === 'executed' && plan.executionTasks && (
                   <ExecutionPanel tasks={plan.executionTasks} />
                 )}
+              </section>
+            )}
+
+            {step === 'review' && (
+              <section className="space-y-6">
+                <BlindBoxCard blindBox={plan.blindBox} requirements={plan.requirements} />
+                <RouteTimeline route={plan.route} />
+                <RouteReviewPanel
+                  plan={plan}
+                  isLoading={isLoading}
+                  onConfirm={handleExecute}
+                  onReplaceRoute={async () => {
+                    const target = plan.route.steps.find((routeStep) => routeStep.role === 'activity') ?? plan.route.steps[0];
+                    if (!target) return;
+                    await handleTriggerPlanB({
+                      type: 'unavailable',
+                      poiId: target.poi.id,
+                      message: '用户不满意当前路线，希望先替换核心节点并重新规划',
+                    }, 'review');
+                  }}
+                  onReplaceStep={async (routeStep) => {
+                    await handleTriggerPlanB({
+                      type: 'unavailable',
+                      poiId: routeStep.poi.id,
+                      message: `用户希望更换「${routeStep.poi.name}」这个节点`,
+                    }, 'review');
+                  }}
+                />
               </section>
             )}
 

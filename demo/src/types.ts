@@ -80,6 +80,7 @@ export interface Requirements {
   preferences: string[];
   constraints: string[];
   timeText: string;
+  rawText?: string;
   parseMethod: string;
   fallbackReason?: string;
 }
@@ -98,4 +99,4 @@ export interface UserInput {
   quickSelections: Record<string, unknown>;
 }
 
-export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'executed' | 'planb';
+export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'review' | 'executed' | 'planb';
