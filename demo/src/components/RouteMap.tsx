@@ -6,6 +6,13 @@ interface Props {
   onClose: () => void;
 }
 
+interface MapPoint {
+  name: string;
+  lng: number;
+  lat: number;
+  synthetic: boolean;
+}
+
 // 等待 AMap 加载完毕（带超时）
 function useAMapReady(): { ready: boolean; error: boolean } {
   const [ready, setReady] = useState(false);
@@ -73,11 +80,10 @@ export default function RouteMap({ route, onClose }: Props) {
     const AMap = (window as Window & { AMap: typeof AMap }).AMap;
     if (!AMap || mapInstance.current) return;
 
-    // 收集有坐标的 step
-    const stepsWithCoord = route.steps.filter(s => s.poi.lat && s.poi.lng);
-    if (stepsWithCoord.length === 0) return;
+    const mapPoints = buildMapPoints(route);
+    if (mapPoints.length === 0) return;
 
-    const path: [number, number][] = stepsWithCoord.map(s => [s.poi.lng!, s.poi.lat!]);
+    const path: [number, number][] = mapPoints.map(point => [point.lng, point.lat]);
 
     // 计算中心点
     const lats = path.map(([, lat]) => lat);
@@ -112,10 +118,10 @@ export default function RouteMap({ route, onClose }: Props) {
       map.add(polyline);
 
       // 画标记
-      stepsWithCoord.forEach((step, i) => {
+      mapPoints.forEach((point, i) => {
         const marker = new AMap.Marker({
-          position: [step.poi.lng!, step.poi.lat!],
-          content: makeMarkerContent(step.poi.name, i, stepsWithCoord.length),
+          position: [point.lng, point.lat],
+          content: makeMarkerContent(point.synthetic ? `${point.name}（示意）` : point.name, i, mapPoints.length),
           offset: new AMap.Pixel(-16, -42),
         });
         map.add(marker);
@@ -133,6 +139,7 @@ export default function RouteMap({ route, onClose }: Props) {
   }, [ready, route, destroyMap]);
 
   const hasCoords = route.steps.some(s => s.poi.lat && s.poi.lng);
+  const routeSignature = route.steps.map((step) => `${step.poi.id}:${step.poi.name}:${step.poi.lat ?? 'x'}:${step.poi.lng ?? 'x'}`).join('|');
   const shouldShowFallback = !hasCoords || amapError || mapError;
 
   return (
@@ -181,7 +188,10 @@ export default function RouteMap({ route, onClose }: Props) {
             </div>
           </div>
         ) : (
-          <div ref={mapRef} className="flex-1 w-full" style={{ minHeight: 0 }} />
+          <div key={routeSignature} className="relative flex-1 w-full" style={{ minHeight: 0 }}>
+            <div ref={mapRef} className="absolute inset-0" />
+            <RouteNodeOverlay route={route} />
+          </div>
         )}
 
         {/* 底部图例 */}
@@ -199,6 +209,45 @@ export default function RouteMap({ route, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+function buildMapPoints(route: Route): MapPoint[] {
+  const realPoints = route.steps
+    .map((step, index) => (
+      step.poi.lat && step.poi.lng
+        ? { index, name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat, synthetic: false }
+        : null
+    ))
+    .filter((point): point is MapPoint & { index: number } => Boolean(point));
+
+  if (realPoints.length === 0) return [];
+
+  return route.steps.map((step, index) => {
+    if (step.poi.lat && step.poi.lng) {
+      return { name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat, synthetic: false };
+    }
+
+    const before = [...realPoints].reverse().find((point) => point.index < index);
+    const after = realPoints.find((point) => point.index > index);
+
+    if (before && after) {
+      return {
+        name: step.poi.name,
+        lng: (before.lng + after.lng) / 2,
+        lat: (before.lat + after.lat) / 2,
+        synthetic: true,
+      };
+    }
+
+    const anchor = before ?? after ?? realPoints[0];
+    const offset = 0.004 * (index + 1);
+    return {
+      name: step.poi.name,
+      lng: anchor.lng + offset,
+      lat: anchor.lat + offset / 2,
+      synthetic: true,
+    };
+  });
 }
 
 function FallbackRouteMap({ route, reason }: { route: Route; reason: string }) {
@@ -241,6 +290,37 @@ function FallbackRouteMap({ route, reason }: { route: Route; reason: string }) {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RouteNodeOverlay({ route }: { route: Route }) {
+  return (
+    <div className="pointer-events-none absolute left-4 right-4 bottom-4 rounded-2xl border border-white/70 bg-white/92 p-3 shadow-xl backdrop-blur">
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {route.steps.map((step, index) => {
+          const isFirst = index === 0;
+          const isLast = index === route.steps.length - 1;
+          const color = isFirst ? '#16A34A' : isLast ? '#DC2626' : '#7C3AED';
+
+          return (
+            <div key={`${step.poi.id}-${index}`} className="flex min-w-fit items-center gap-2">
+              <div className="flex items-center gap-2 rounded-xl bg-purple-50 px-3 py-2">
+                <span
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-extrabold text-white"
+                  style={{ background: color }}
+                >
+                  {isFirst ? '起' : isLast ? '终' : index + 1}
+                </span>
+                <span className="max-w-[9rem] truncate text-xs font-extrabold text-purple-950">
+                  {step.poi.name}
+                </span>
+              </div>
+              {!isLast && <span className="text-xs font-bold text-purple-300">→</span>}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { LlmReplanConfig, Plan, RouteStep } from '../types';
 import RouteMap from './RouteMap';
 
@@ -413,10 +413,18 @@ export default function RouteReviewPanel({
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('');
   const [customReplacementPrompt, setCustomReplacementPrompt] = useState('');
   const [showMap, setShowMap] = useState(false);
-  const selectedStep = plan.route.steps.find((step) => step.poi.id === selectedStepId) ?? plan.route.steps[0];
+  const displayRoute = plan.planB?.afterRoute ?? plan.route;
+  const displayPlan = { ...plan, route: displayRoute };
+  const selectedStep = displayRoute.steps.find((step) => step.poi.id === selectedStepId) ?? displayRoute.steps[0];
   const replacementCandidates = pendingConfirmStep ? getReplacementCandidates(pendingConfirmStep) : [];
   const latestChange = plan.planB?.changes?.[0];
   const noReplacementFound = Boolean(plan.planB && !latestChange);
+
+  useEffect(() => {
+    if (!displayRoute.steps.some((step) => step.poi.id === selectedStepId)) {
+      setSelectedStepId(displayRoute.steps[0]?.poi.id ?? '');
+    }
+  }, [displayRoute, selectedStepId]);
 
   return (
     <div className="space-y-6 animate-slide-up">
@@ -537,7 +545,7 @@ export default function RouteReviewPanel({
 
       {mode === 'node' && selectedStep && (
         <NodeSelectionPanel
-          plan={plan}
+          plan={displayPlan}
           selectedStep={selectedStep}
           selectedStepId={selectedStepId}
           isLoading={isLoading}
@@ -627,7 +635,7 @@ export default function RouteReviewPanel({
       )}
 
       {/* 地图弹窗 */}
-      {showMap && <RouteMap route={plan.route} onClose={() => setShowMap(false)} />}
+      {showMap && <RouteMap key={displayRoute.steps.map((step) => step.poi.id).join('-')} route={displayRoute} onClose={() => setShowMap(false)} />}
     </div>
   );
 }
