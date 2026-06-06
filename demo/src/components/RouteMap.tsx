@@ -10,7 +10,6 @@ interface MapPoint {
   name: string;
   lng: number;
   lat: number;
-  synthetic: boolean;
 }
 
 // 等待 AMap 加载完毕（带超时）
@@ -121,7 +120,7 @@ export default function RouteMap({ route, onClose }: Props) {
       mapPoints.forEach((point, i) => {
         const marker = new AMap.Marker({
           position: [point.lng, point.lat],
-          content: makeMarkerContent(point.synthetic ? `${point.name}（示意）` : point.name, i, mapPoints.length),
+          content: makeMarkerContent(point.name, i, mapPoints.length),
           offset: new AMap.Pixel(-16, -42),
         });
         map.add(marker);
@@ -176,8 +175,8 @@ export default function RouteMap({ route, onClose }: Props) {
             route={route}
             reason={
               !hasCoords
-                ? '当前路线暂无完整坐标，已切换为路线示意图。'
-                : '高德地图暂时不可用，已切换为路线示意图。'
+                ? '当前路线暂无完整坐标，已切换为备用路线图。'
+                : '高德地图暂时不可用，已切换为备用路线图。'
             }
           />
         ) : !ready ? (
@@ -215,7 +214,7 @@ function buildMapPoints(route: Route): MapPoint[] {
   const realPoints = route.steps
     .map((step, index) => (
       step.poi.lat && step.poi.lng
-        ? { index, name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat, synthetic: false }
+        ? { index, name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat }
         : null
     ))
     .filter((point): point is MapPoint & { index: number } => Boolean(point));
@@ -224,7 +223,7 @@ function buildMapPoints(route: Route): MapPoint[] {
 
   return route.steps.map((step, index) => {
     if (step.poi.lat && step.poi.lng) {
-      return { name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat, synthetic: false };
+      return { name: step.poi.name, lng: step.poi.lng, lat: step.poi.lat };
     }
 
     const before = [...realPoints].reverse().find((point) => point.index < index);
@@ -235,7 +234,6 @@ function buildMapPoints(route: Route): MapPoint[] {
         name: step.poi.name,
         lng: (before.lng + after.lng) / 2,
         lat: (before.lat + after.lat) / 2,
-        synthetic: true,
       };
     }
 
@@ -245,7 +243,6 @@ function buildMapPoints(route: Route): MapPoint[] {
       name: step.poi.name,
       lng: anchor.lng + offset,
       lat: anchor.lat + offset / 2,
-      synthetic: true,
     };
   });
 }
