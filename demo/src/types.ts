@@ -30,6 +30,8 @@ export interface Poi {
   distanceLevel?: string;
   reason: string;
   weatherSensitive?: boolean;
+  lat?: number;
+  lng?: number;
 }
 
 export interface RouteStep {

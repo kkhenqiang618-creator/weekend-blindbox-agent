@@ -60,6 +60,8 @@ export interface Poi {
   weatherSensitive?: boolean;
   replaceableBy?: string[];
   priorityScore?: number;
+  lat?: number;
+  lng?: number;
 }
 
 export interface RouteStep {

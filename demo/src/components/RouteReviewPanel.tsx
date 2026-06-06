@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { LlmReplanConfig, Plan, RouteStep } from '../types';
+import RouteMap from './RouteMap';
 
 interface Props {
   plan: Plan;
@@ -411,6 +412,7 @@ export default function RouteReviewPanel({
   const [pendingConfirmStep, setPendingConfirmStep] = useState<RouteStep | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('');
   const [customReplacementPrompt, setCustomReplacementPrompt] = useState('');
+  const [showMap, setShowMap] = useState(false);
   const selectedStep = plan.route.steps.find((step) => step.poi.id === selectedStepId) ?? plan.route.steps[0];
   const replacementCandidates = pendingConfirmStep ? getReplacementCandidates(pendingConfirmStep) : [];
   const latestChange = plan.planB?.changes?.[0];
@@ -436,7 +438,7 @@ export default function RouteReviewPanel({
           </div>
         </div>
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <button
             type="button"
             onClick={onConfirm}
@@ -450,6 +452,21 @@ export default function RouteReviewPanel({
               满意，确认路线
             </span>
             <span className="mt-2 block text-xs font-semibold leading-5 text-white/78">进入 Agent 代预订辅助</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowMap(true)}
+            disabled={isLoading}
+            className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-purple-50 px-4 py-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow-emerald-200/40 disabled:opacity-50"
+          >
+            <span className="flex items-center gap-2 text-sm font-extrabold text-emerald-700">
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l5.447 2.724A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13l-6-3m6 3V4m0 0L9 7" />
+              </svg>
+              🗺️ 查看地图
+            </span>
+            <span className="mt-2 block text-xs font-semibold leading-5 text-emerald-600/80">地图预览路线</span>
           </button>
 
           <button
@@ -608,6 +625,9 @@ export default function RouteReviewPanel({
           </div>
         </section>
       )}
+
+      {/* 地图弹窗 */}
+      {showMap && <RouteMap route={plan.route} onClose={() => setShowMap(false)} />}
     </div>
   );
 }

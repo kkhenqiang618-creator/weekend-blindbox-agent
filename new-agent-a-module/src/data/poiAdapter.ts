@@ -17,6 +17,8 @@ function normalizePoi(raw: RawPoi): Poi {
   return {
     id,
     name: asString(raw.name, id),
+    lat: optionalNumber(raw.lat),
+    lng: optionalNumber(raw.lng),
     type,
     subType: asString(raw.subType, type),
     address: optionalString(raw.address),

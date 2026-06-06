@@ -51,7 +51,9 @@
       "poi_002",
       "poi_003"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.56685,
+    "lng": 114.121515
   },
   {
     "id": "poi_002",
@@ -106,7 +108,9 @@
       "poi_001",
       "poi_004"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.64213,
+    "lng": 113.864959
   },
   {
     "id": "poi_003",
@@ -161,7 +165,9 @@
       "poi_001",
       "poi_004"
     ],
-    "priorityScore": 85
+    "priorityScore": 85,
+    "lat": 22.535788,
+    "lng": 113.927276
   },
   {
     "id": "poi_004",
@@ -216,7 +222,9 @@
       "poi_003",
       "poi_008"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.546572,
+    "lng": 114.076423
   },
   {
     "id": "poi_005",
@@ -270,7 +278,9 @@
       "poi_006",
       "poi_008"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.587464,
+    "lng": 114.146443
   },
   {
     "id": "poi_006",
@@ -322,7 +332,9 @@
       "poi_001",
       "poi_005"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.568402,
+    "lng": 114.148005
   },
   {
     "id": "poi_007",
@@ -376,7 +388,9 @@
       "poi_002",
       "poi_003"
     ],
-    "priorityScore": 86
+    "priorityScore": 86,
+    "lat": 22.555364,
+    "lng": 113.895644
   },
   {
     "id": "poi_008",
@@ -429,7 +443,9 @@
       "poi_003",
       "poi_004"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.546577,
+    "lng": 114.122394
   },
   {
     "id": "poi_009",
@@ -481,7 +497,9 @@
       "poi_010",
       "poi_011"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.579626,
+    "lng": 114.116705
   },
   {
     "id": "poi_010",
@@ -534,7 +552,9 @@
       "poi_009",
       "poi_012"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.545278,
+    "lng": 114.114461
   },
   {
     "id": "poi_011",
@@ -586,7 +606,9 @@
       "poi_010",
       "poi_013"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.543047,
+    "lng": 113.887618
   },
   {
     "id": "poi_012",
@@ -637,7 +659,9 @@
       "poi_009",
       "poi_014"
     ],
-    "priorityScore": 76
+    "priorityScore": 76,
+    "lat": 22.547283,
+    "lng": 114.096067
   },
   {
     "id": "poi_013",
@@ -689,7 +713,9 @@
       "poi_011",
       "poi_015"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.765293,
+    "lng": 113.82265
   },
   {
     "id": "poi_014",
@@ -740,7 +766,9 @@
       "poi_012",
       "poi_016"
     ],
-    "priorityScore": 75
+    "priorityScore": 75,
+    "lat": 22.5329,
+    "lng": 113.9355
   },
   {
     "id": "poi_015",
@@ -791,7 +819,9 @@
       "poi_014",
       "poi_017"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.534288,
+    "lng": 114.062599
   },
   {
     "id": "poi_016",
@@ -846,7 +876,9 @@
       "poi_015",
       "poi_018"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.535899,
+    "lng": 114.065432
   },
   {
     "id": "poi_017",
@@ -899,7 +931,9 @@
       "poi_011",
       "poi_013"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.549623,
+    "lng": 113.88537
   },
   {
     "id": "poi_018",
@@ -951,7 +985,9 @@
       "poi_013",
       "poi_016"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.545956,
+    "lng": 114.061023
   },
   {
     "id": "poi_029",
@@ -1003,7 +1039,9 @@
       "poi_030",
       "poi_031"
     ],
-    "priorityScore": 88
+    "priorityScore": 88,
+    "lat": 22.538869,
+    "lng": 113.97873
   },
   {
     "id": "poi_030",
@@ -1055,7 +1093,9 @@
       "poi_029",
       "poi_032"
     ],
-    "priorityScore": 87
+    "priorityScore": 87,
+    "lat": 22.534481,
+    "lng": 113.973715
   },
   {
     "id": "poi_031",
@@ -1109,7 +1149,9 @@
       "poi_032",
       "poi_033"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.524634,
+    "lng": 113.990272
   },
   {
     "id": "poi_032",
@@ -1161,7 +1203,9 @@
       "poi_031",
       "poi_034"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.545627,
+    "lng": 114.117705
   },
   {
     "id": "poi_033",
@@ -1213,7 +1257,9 @@
       "poi_034",
       "poi_035"
     ],
-    "priorityScore": 86
+    "priorityScore": 86,
+    "lat": 22.577705,
+    "lng": 114.177004
   },
   {
     "id": "poi_034",
@@ -1264,7 +1310,9 @@
       "poi_033",
       "poi_036"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.735034,
+    "lng": 113.789673
   },
   {
     "id": "poi_035",
@@ -1316,7 +1364,9 @@
       "poi_031",
       "poi_037"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.532087,
+    "lng": 114.054149
   },
   {
     "id": "poi_036",
@@ -1368,7 +1418,9 @@
       "poi_035",
       "poi_038"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.552264,
+    "lng": 113.88764
   },
   {
     "id": "poi_037",
@@ -1421,7 +1473,9 @@
       "poi_033",
       "poi_039"
     ],
-    "priorityScore": 87
+    "priorityScore": 87,
+    "lat": 22.513668,
+    "lng": 113.912974
   },
   {
     "id": "poi_038",
@@ -1474,7 +1528,9 @@
       "poi_036",
       "poi_035"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.568767,
+    "lng": 113.904033
   },
   {
     "id": "poi_039",
@@ -1521,7 +1577,9 @@
       "poi_040",
       "poi_041"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.533235,
+    "lng": 114.026495
   },
   {
     "id": "poi_040",
@@ -1569,7 +1627,9 @@
       "poi_039",
       "poi_042"
     ],
-    "priorityScore": 85
+    "priorityScore": 85,
+    "lat": 22.5458,
+    "lng": 114.0665
   },
   {
     "id": "poi_041",
@@ -1615,7 +1675,9 @@
       "poi_040",
       "poi_043"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.501608,
+    "lng": 113.921414
   },
   {
     "id": "poi_042",
@@ -1662,7 +1724,9 @@
       "poi_041",
       "poi_044"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.536805,
+    "lng": 114.065277
   },
   {
     "id": "poi_043",
@@ -1710,7 +1774,9 @@
       "poi_044",
       "poi_045"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.5329,
+    "lng": 113.9355
   },
   {
     "id": "poi_044",
@@ -1757,7 +1823,9 @@
       "poi_043",
       "poi_046"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.55053,
+    "lng": 114.110175
   },
   {
     "id": "poi_045",
@@ -1805,7 +1873,9 @@
       "poi_044",
       "poi_047"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.533191,
+    "lng": 113.930478
   },
   {
     "id": "poi_046",
@@ -1851,7 +1921,9 @@
       "poi_045",
       "poi_048"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.533191,
+    "lng": 113.930478
   },
   {
     "id": "poi_047",
@@ -1899,7 +1971,9 @@
       "poi_048",
       "poi_049"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.625823,
+    "lng": 113.8451
   },
   {
     "id": "poi_048",
@@ -1946,7 +2020,9 @@
       "poi_047",
       "poi_050"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.566019,
+    "lng": 114.143488
   },
   {
     "id": "poi_049",
@@ -1995,7 +2071,9 @@
       "poi_048",
       "poi_051"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.536178,
+    "lng": 113.91709
   },
   {
     "id": "poi_050",
@@ -2042,7 +2120,9 @@
       "poi_046",
       "poi_049"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.54672,
+    "lng": 114.059928
   },
   {
     "id": "poi_068",
@@ -2089,7 +2169,9 @@
       "poi_069",
       "poi_070"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.535739,
+    "lng": 114.066352
   },
   {
     "id": "poi_069",
@@ -2138,7 +2220,9 @@
       "poi_068",
       "poi_071"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.525153,
+    "lng": 113.991773
   },
   {
     "id": "poi_070",
@@ -2186,7 +2270,9 @@
       "poi_069",
       "poi_072"
     ],
-    "priorityScore": 76
+    "priorityScore": 76,
+    "lat": 22.538039,
+    "lng": 114.064544
   },
   {
     "id": "poi_051",
@@ -2235,7 +2321,9 @@
       "poi_052",
       "poi_053"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.61503,
+    "lng": 113.861218
   },
   {
     "id": "poi_052",
@@ -2285,7 +2373,9 @@
       "poi_051",
       "poi_054"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.667588,
+    "lng": 113.820921
   },
   {
     "id": "poi_053",
@@ -2336,7 +2426,9 @@
       "poi_052",
       "poi_055"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.568929,
+    "lng": 113.903422
   },
   {
     "id": "poi_054",
@@ -2389,7 +2481,9 @@
       "poi_055",
       "poi_056"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.548754,
+    "lng": 113.887879
   },
   {
     "id": "poi_055",
@@ -2440,7 +2534,9 @@
       "poi_054",
       "poi_057"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.76774,
+    "lng": 113.846187
   },
   {
     "id": "poi_056",
@@ -2492,7 +2588,9 @@
       "poi_055",
       "poi_058"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.5357,
+    "lng": 114.0664
   },
   {
     "id": "poi_057",
@@ -2543,7 +2641,9 @@
       "poi_056",
       "poi_059"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.758723,
+    "lng": 113.812213
   },
   {
     "id": "poi_058",
@@ -2595,7 +2695,9 @@
       "poi_057",
       "poi_060"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.783159,
+    "lng": 113.835768
   },
   {
     "id": "poi_059",
@@ -2648,7 +2750,9 @@
       "poi_058",
       "poi_061"
     ],
-    "priorityScore": 85
+    "priorityScore": 85,
+    "lat": 22.543089,
+    "lng": 113.886696
   },
   {
     "id": "poi_060",
@@ -2699,7 +2803,9 @@
       "poi_059",
       "poi_062"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.543089,
+    "lng": 113.886696
   },
   {
     "id": "poi_061",
@@ -2749,7 +2855,9 @@
       "poi_060",
       "poi_063"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.543089,
+    "lng": 113.886696
   },
   {
     "id": "poi_062",
@@ -2799,7 +2907,9 @@
       "poi_061",
       "poi_064"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.559863,
+    "lng": 113.906304
   },
   {
     "id": "poi_063",
@@ -2851,7 +2961,9 @@
       "poi_064",
       "poi_065"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.522696,
+    "lng": 113.992044
   },
   {
     "id": "poi_064",
@@ -2903,7 +3015,9 @@
       "poi_063",
       "poi_066"
     ],
-    "priorityScore": 86
+    "priorityScore": 86,
+    "lat": 22.523474,
+    "lng": 113.991235
   },
   {
     "id": "poi_065",
@@ -2954,7 +3068,9 @@
       "poi_064",
       "poi_067"
     ],
-    "priorityScore": 81
+    "priorityScore": 81,
+    "lat": 22.525231,
+    "lng": 113.98993
   },
   {
     "id": "poi_066",
@@ -3006,7 +3122,9 @@
       "poi_065",
       "poi_068"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.52518,
+    "lng": 113.992305
   },
   {
     "id": "poi_067",
@@ -3057,7 +3175,9 @@
       "poi_066",
       "poi_063"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.522561,
+    "lng": 113.992465
   },
   {
     "id": "poi_071",
@@ -3105,7 +3225,9 @@
       "poi_070",
       "poi_073"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.547863,
+    "lng": 114.133505
   },
   {
     "id": "poi_072",
@@ -3153,7 +3275,9 @@
       "poi_073",
       "poi_074"
     ],
-    "priorityScore": 78
+    "priorityScore": 78,
+    "lat": 22.519596,
+    "lng": 114.043441
   },
   {
     "id": "poi_073",
@@ -3201,7 +3325,9 @@
       "poi_072",
       "poi_075"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.585512,
+    "lng": 113.968861
   },
   {
     "id": "poi_074",
@@ -3249,7 +3375,9 @@
       "poi_075",
       "poi_076"
     ],
-    "priorityScore": 76
+    "priorityScore": 76,
+    "lat": 22.577485,
+    "lng": 114.134606
   },
   {
     "id": "poi_075",
@@ -3297,7 +3425,9 @@
       "poi_074",
       "poi_073"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.6355,
+    "lng": 114.2104
   },
   {
     "id": "poi_076",
@@ -3347,7 +3477,9 @@
       "poi_077",
       "poi_078"
     ],
-    "priorityScore": 77
+    "priorityScore": 77,
+    "lat": 22.533935,
+    "lng": 114.053693
   },
   {
     "id": "poi_077",
@@ -3398,7 +3530,9 @@
       "poi_076",
       "poi_079"
     ],
-    "priorityScore": 82
+    "priorityScore": 82,
+    "lat": 22.556013,
+    "lng": 114.070265
   },
   {
     "id": "poi_078",
@@ -3450,7 +3584,9 @@
       "poi_079",
       "poi_080"
     ],
-    "priorityScore": 79
+    "priorityScore": 79,
+    "lat": 22.535957,
+    "lng": 114.066437
   },
   {
     "id": "poi_079",
@@ -3501,7 +3637,9 @@
       "poi_078",
       "poi_081"
     ],
-    "priorityScore": 84
+    "priorityScore": 84,
+    "lat": 22.535362,
+    "lng": 114.066327
   },
   {
     "id": "poi_080",
@@ -3552,7 +3690,9 @@
       "poi_079",
       "poi_082"
     ],
-    "priorityScore": 80
+    "priorityScore": 80,
+    "lat": 22.536084,
+    "lng": 114.066262
   },
   {
     "id": "poi_081",
@@ -3605,6 +3745,8 @@
       "poi_080",
       "poi_079"
     ],
-    "priorityScore": 83
+    "priorityScore": 83,
+    "lat": 22.535957,
+    "lng": 114.066437
   }
 ]
