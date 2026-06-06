@@ -423,6 +423,9 @@ export default function RouteReviewPanel({
   const latestChange = plan.planB?.changes?.[0];
   const noReplacementFound = Boolean(plan.planB && !latestChange);
   const isRouteReroll = plan.planB?.event?.type === 'reroll';
+  const latestChangedStep = latestChange?.to
+    ? displayRoute.steps.find((step) => step.poi.name === latestChange.to)
+    : undefined;
 
   useEffect(() => {
     if (!displayRoute.steps.some((step) => step.poi.id === selectedStepId)) {
@@ -637,12 +640,38 @@ export default function RouteReviewPanel({
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                onClick={() => setMode(isRouteReroll ? 'route' : 'node')}
+                onClick={() => {
+                  if (!isRouteReroll && latestChangedStep) {
+                    onReplaceStep(
+                      latestChangedStep,
+                      undefined,
+                      llmConfig,
+                      `继续换掉「${latestChangedStep.poi.name}」，不要重复当前这个地点，仍然保持同区域、同路线风格和少绕路。`
+                    );
+                    return;
+                  }
+                  setMode(isRouteReroll ? 'route' : 'node');
+                }}
                 disabled={isLoading}
                 className="inline-flex items-center justify-center rounded-full border border-emerald-200 bg-white/76 px-5 py-3 text-sm font-bold text-emerald-800 transition-all duration-200 hover:-translate-y-0.5 hover:bg-emerald-50 disabled:opacity-40"
               >
                 {isRouteReroll ? '继续换路线' : '再换一个节点'}
               </button>
+              {isRouteReroll && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingConfirmStep(null);
+                    setSelectedCandidateId('');
+                    setCustomReplacementPrompt('');
+                    setMode('node');
+                  }}
+                  disabled={isLoading}
+                  className="inline-flex items-center justify-center rounded-full border border-purple-200 bg-white/76 px-5 py-3 text-sm font-bold text-purple-800 transition-all duration-200 hover:-translate-y-0.5 hover:bg-purple-50 disabled:opacity-40"
+                >
+                  继续换节点
+                </button>
+              )}
               <button
                 type="button"
                 onClick={onConfirm}

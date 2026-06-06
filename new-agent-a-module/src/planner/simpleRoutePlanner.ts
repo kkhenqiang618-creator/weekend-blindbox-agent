@@ -38,6 +38,12 @@ export function buildRoute(requirements: Requirements, pois: Poi[], theme: strin
     ? steps.map((step) => step.poi)
     : candidates.slice(0, Math.min(3, candidates.length));
 
+  for (const candidate of candidates) {
+    if (selected.length >= 3) break;
+    if (selected.some((poi) => poi.id === candidate.id)) continue;
+    selected.push(candidate);
+  }
+
   steps.length = 0;
   selected.forEach((poi, index) => {
     steps.push({

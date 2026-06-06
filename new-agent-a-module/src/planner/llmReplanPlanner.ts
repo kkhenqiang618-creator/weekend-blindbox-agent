@@ -247,7 +247,8 @@ async function searchLivePoiCandidates(
     const candidates = data.pois
       .filter((item) => isUsableAmapPoi(item))
       .map((item, index) => poiFromAmap(item, index, event, targetStep, requirements))
-      .filter((poi): poi is Poi => Boolean(poi));
+      .filter((poi): poi is Poi => Boolean(poi && poi.id !== targetStep.poi.id && poi.name !== targetStep.poi.name))
+      .filter((poi) => !/不要重复当前这个地点/.test(event.customPreference || "") || poi.name !== targetStep.poi.name);
 
     return candidates;
   } catch {

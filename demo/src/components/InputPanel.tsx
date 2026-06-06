@@ -23,11 +23,18 @@ const MOCK_SUGGESTIONS = [
   '周末下午想和朋友在深圳拍照喝咖啡，不想排队',
   '带娃出去玩半天，要亲子的',
   '一个人想找个安静的地方看书喝咖啡',
+  '今晚想和朋友看夜景，吃点简餐，别太赶',
+  '情侣约会想找夜景好一点、能小酌的地方',
+  '龙岗附近有没有适合拍照又能顺便吃点东西的路线？',
+  '下雨天想找室内手作或者展览，附近再喝杯咖啡',
+  '周末想省钱一点，公园散步加平价美食',
+  '想找个小众文化点，适合一个人慢慢逛',
 ];
 
 const BLIND_BOX_THEMES = [
   { value: '惊喜盲盒', label: '惊喜盲盒', desc: '让 Agent 自动判断风格' },
   { value: '小众拍照吃货盒', label: '小众拍照吃货盒', desc: '打卡、咖啡和美食优先' },
+  { value: '夜景微醺盒', label: '夜景微醺盒', desc: '夜景、简餐和小酌氛围' },
   { value: '雨天室内回血盒', label: '雨天室内回血盒', desc: '室内、解压、稳定执行' },
   { value: '亲子轻松放电盒', label: '亲子轻松放电盒', desc: '低强度亲子半日路线' },
   { value: '城市散步疗愈盒', label: '城市散步疗愈盒', desc: '散步、安静和轻体验' },
@@ -46,6 +53,7 @@ export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfig
   const [blindBoxTheme, setBlindBoxTheme] = useState('惊喜盲盒');
   const [showModelConfig, setShowModelConfig] = useState(false);
   const [placeholder] = useState(() => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]);
+  const [suggestions] = useState(() => shuffle(MOCK_SUGGESTIONS).slice(0, 4));
 
   const handleSubmit = () => {
     const text = rawText.trim();
@@ -273,7 +281,7 @@ export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfig
                 试试这样说
               </div>
               <div className="grid gap-2.5">
-                {MOCK_SUGGESTIONS.map((s, i) => (
+                {suggestions.map((s, i) => (
                   <button
                   key={i}
                   onClick={() => setRawText(s)}
@@ -297,4 +305,8 @@ export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfig
       </div>
     </div>
   );
+}
+
+function shuffle<T>(items: T[]): T[] {
+  return [...items].sort(() => Math.random() - 0.5);
 }

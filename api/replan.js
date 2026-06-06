@@ -45,6 +45,12 @@ var THEME_RULES = [
     storyPrefix: "\u5148\u627E\u9002\u5408\u51FA\u7247\u7684\u5730\u70B9\uFF0C\u518D\u7528\u5496\u5561\u548C\u7F8E\u98DF\u628A\u534A\u65E5\u8282\u594F\u63A5\u4F4F\u3002"
   },
   {
+    theme: "\u591C\u666F\u5FAE\u91BA\u76D2",
+    tags: ["\u591C\u666F", "\u5FAE\u91BA", "\u7B80\u9910"],
+    match: (req) => hasAny(req.preferences, ["\u591C\u666F", "\u5FAE\u91BA", "\u7B80\u9910"]) || /晚上|夜景|小酌|微醺/.test(req.rawText),
+    storyPrefix: "\u628A\u665A\u95F4\u6D3B\u52A8\u3001\u591C\u666F\u6C1B\u56F4\u548C\u8F7B\u677E\u7B80\u9910\u4E32\u8D77\u6765\uFF0C\u9002\u5408\u670B\u53CB\u6216\u60C5\u4FA3\u4E0D\u8D76\u8DEF\u5730\u6536\u5C3E\u3002"
+  },
+  {
     theme: "\u7701\u94B1\u5FEB\u4E50\u76D2",
     tags: ["\u9884\u7B97\u53CB\u597D", "\u6027\u4EF7\u6BD4"],
     match: (req) => req.budgetMax <= 150 || req.constraints.includes("\u9884\u7B97\u53CB\u597D"),
@@ -181,6 +187,9 @@ function extractPreferences(text) {
     [/咖啡|拿铁|美式/, "\u5496\u5561"],
     [/甜品|蛋糕|冰品/, "\u751C\u54C1"],
     [/美食|吃饭|吃点东西|小吃|餐厅|简餐/, "\u7F8E\u98DF"],
+    [/简餐|轻食/, "\u7B80\u9910"],
+    [/夜景|夜晚|晚上|灯光|看海夜景/, "\u591C\u666F"],
+    [/微醺|小酌|酒吧|精酿|鸡尾酒|bistro/i, "\u5FAE\u91BA"],
     [/文化|看展|展览|书店|博物馆/, "\u6587\u5316"],
     [/户外|公园|散步|citywalk|徒步/, "\u6237\u5916"],
     [/运动|健身/, "\u8FD0\u52A8"],
@@ -267,6 +276,7 @@ async function parseIntentWithLLM(userInput) {
             "\u9884\u7B97\uFF1A\u7528\u6237\u6CA1\u8BF4\u65F6\uFF0C\u6839\u636E\u8BED\u6C14\u548C\u6D3B\u52A8\u7C7B\u578B\u63A8\u65AD\u5408\u7406\u9884\u7B97\uFF1B\u4ECD\u65E0\u6CD5\u5224\u65AD\u65F6\u7528300\u3002",
             "\u540C\u884C\u4EBA\uFF1A\u8BF7\u6839\u636E\u8BED\u4E49\u5224\u65AD\u3002\u5E26\u5A03/\u5B69\u5B50/\u4EB2\u5B50\u901A\u5E38\u662F\u4EB2\u5B50\uFF1B\u5BF9\u8C61/\u60C5\u4FA3/\u7EA6\u4F1A\u901A\u5E38\u662F\u60C5\u4FA3\uFF1B\u670B\u53CB/\u540C\u5B66/\u540C\u4E8B/\u56E2\u5EFA/\u591A\u4EBA\u901A\u5E38\u662F\u670B\u53CB\uFF1B\u5982\u679C\u7528\u6237\u4EE5\u7B2C\u4E00\u4EBA\u79F0\u8868\u8FBE\u81EA\u5DF1\u60F3\u51FA\u53BB\uFF0C\u5982\u201C\u6211\u73B0\u5728\u6709\u70B9\u65E0\u804A\u201D\u201C\u6211\u60F3\u627E\u4E2A\u5730\u65B9\u201D\uFF0C\u4E14\u6CA1\u6709\u63D0\u5230\u540C\u884C\u4EBA\uFF0C\u901A\u5E38\u662F\u5355\u4EBA\u3002\u82E5\u6CA1\u6709\u660E\u786E\u5173\u952E\u8BCD\uFF0C\u4E5F\u8BF7\u7ED3\u5408\u6574\u53E5\u8BDD\u9009\u62E9\u6700\u5408\u7406\u7684 peopleType\uFF0C\u4E0D\u8981\u56FA\u5B9A\u9ED8\u8BA4\u670B\u53CB\u3002",
             "preferences\uFF1A\u4ECE\u8BED\u4E49\u4E2D\u62BD\u53D6\u7528\u6237\u771F\u6B63\u60F3\u8981\u7684\u4F53\u9A8C\uFF0C\u5982\u62CD\u7167\u3001\u5496\u5561\u3001\u7F8E\u98DF\u3001\u6587\u5316\u3001\u6237\u5916\u3001\u8FD0\u52A8\u3001\u89E3\u538B\u3001\u5C0F\u4F17\u3001\u6027\u4EF7\u6BD4\u3001\u4F11\u95F2\u7B49\u3002",
+            "\u5982\u679C\u7528\u6237\u63D0\u5230\u665A\u4E0A\u3001\u591C\u666F\u3001\u5FAE\u91BA\u3001\u5C0F\u914C\u3001\u9152\u5427\u3001\u7CBE\u917F\u3001bistro\u3001\u7B80\u9910\uFF0C\u8BF7\u628A\u591C\u666F\u3001\u5FAE\u91BA\u3001\u7B80\u9910\u4E2D\u76F8\u5173\u8BCD\u653E\u5165 preferences\u3002",
             "constraints\uFF1A\u62BD\u53D6\u9650\u5236\u6761\u4EF6\uFF0C\u5982\u4E0D\u60F3\u6392\u961F\u3001\u5C11\u8D70\u8DEF\u3001\u5BA4\u5185\u4F18\u5148\u3001\u9884\u7B97\u53CB\u597D\u3001\u96E8\u5929\u53EF\u53BB\u7B49\u3002",
             "timeText\uFF1A\u4FDD\u7559\u7528\u6237\u63D0\u5230\u7684\u65F6\u95F4\u8868\u8FBE\uFF0C\u5982\u73B0\u5728\u3001\u5468\u516D\u4E0B\u5348\u3001\u660E\u5929\u4E0B\u5348\u3001\u5468\u672B\u665A\u4E0A\uFF1B\u5982\u679C\u6CA1\u8BF4\uFF0C\u7ED3\u5408\u8BED\u5883\u7ED9\u51FA\u81EA\u7136\u65F6\u95F4\uFF0C\u5982\u73B0\u5728\u6216\u5468\u672B\u4E0B\u5348\u3002",
             "distanceLevel\uFF1A\u5982\u679C\u7528\u6237\u6CA1\u660E\u786E\u8BF4\u8DDD\u79BB\uFF0C\u8FD4\u56DE\u7A7A\u5B57\u7B26\u4E32\u3002"
@@ -592,6 +602,11 @@ function buildRoute(requirements, pois2, theme) {
     addStepIfFits(steps, candidate, maxMinutes);
   }
   const selected = steps.length >= 2 ? steps.map((step) => step.poi) : candidates.slice(0, Math.min(3, candidates.length));
+  for (const candidate of candidates) {
+    if (selected.length >= 3) break;
+    if (selected.some((poi) => poi.id === candidate.id)) continue;
+    selected.push(candidate);
+  }
   steps.length = 0;
   selected.forEach((poi, index) => {
     steps.push({
@@ -1038,6 +1053,8 @@ function buildPlanBResult(event, beforeRoute, afterRoute, changes, requirements,
 var DEFAULT_TIMEOUT_MS = 6500;
 var AMAP_PLACE_URL = "https://restapi.amap.com/v3/place/text";
 var SHENZHEN_DISTRICTS = ["\u798F\u7530", "\u5357\u5C71", "\u7F57\u6E56", "\u5B9D\u5B89", "\u9F99\u5C97", "\u9F99\u534E", "\u76D0\u7530", "\u576A\u5C71", "\u5149\u660E", "\u5927\u9E4F"];
+var DEFAULT_MODEL2 = "deepseek-chat";
+var DEFAULT_BASE_URL2 = "https://api.deepseek.com/v1";
 async function buildLiveRoute(requirements, theme, options = {}) {
   return withTimeout(buildLiveRouteInner(requirements, theme, options), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 }
@@ -1049,6 +1066,7 @@ async function buildLiveRouteInner(requirements, theme, options) {
   if (candidates.length < 2) return null;
   const route = buildRoute(requirements, candidates, theme);
   if (route.steps.length < 2) return null;
+  await enrichRouteReasons(route, requirements, theme);
   return { route, candidates, keywords };
 }
 function buildSearchKeywords(requirements, theme) {
@@ -1056,6 +1074,7 @@ function buildSearchKeywords(requirements, theme) {
   const areaPrefix = district ? `${district} ` : `${requirements.city || "\u6DF1\u5733"} `;
   const themeKeywords = {
     "\u5C0F\u4F17\u62CD\u7167\u5403\u8D27\u76D2": ["\u5C0F\u4F17\u5496\u5561", "\u62CD\u7167\u6253\u5361", "\u751C\u54C1\u5496\u5561", "\u521B\u610F\u9910\u5385", "\u827A\u672F\u7A7A\u95F4"],
+    "\u591C\u666F\u5FAE\u91BA\u76D2": ["\u591C\u666F\u9910\u5385", "bistro", "\u7CBE\u917F\u9152\u9986", "\u7B80\u9910", "\u591C\u666F\u6253\u5361"],
     "\u96E8\u5929\u5BA4\u5185\u56DE\u8840\u76D2": ["\u8D2D\u7269\u4E2D\u5FC3", "\u5BC6\u5BA4\u9003\u8131", "\u7535\u5F71\u9662", "DIY\u624B\u5DE5", "\u5496\u5561\u9986"],
     "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2": ["\u4EB2\u5B50\u4E50\u56ED", "\u513F\u7AE5\u4F53\u9A8C", "\u4EB2\u5B50\u9910\u5385", "\u5BA4\u5185\u6E38\u4E50\u573A", "\u516C\u56ED"],
     "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2": ["\u4E66\u5E97\u5496\u5561", "\u516C\u56ED\u6563\u6B65", "\u7F8E\u672F\u9986", "\u521B\u610F\u56ED", "citywalk"],
@@ -1118,7 +1137,7 @@ function poiFromAmap(item, index, keyword, requirements) {
     queueLevel: index % 4 === 0 ? "medium" : "low",
     distanceLevel: "3-10km",
     mockMeituanUrl: `mock://amap/${item.id || index}`,
-    reason: `Agent \u6839\u636E\u300C${keyword}\u300D\u5B9E\u65F6\u68C0\u7D22\u5230\u8BE5\u5730\u70B9\uFF0C\u5E76\u6309\u300C${requirements.blindBoxTheme || "\u60CA\u559C\u76F2\u76D2"}\u300D\u98CE\u683C\u7EB3\u5165\u5019\u9009\u3002`,
+    reason: buildFallbackReason(item, type, keyword, requirements),
     blindBoxThemes: requirements.blindBoxTheme ? [requirements.blindBoxTheme] : void 0,
     availableTools: ["amapPlaceSearch", "queueCheck", "availabilityCheck"],
     bookingRequired: false,
@@ -1127,6 +1146,103 @@ function poiFromAmap(item, index, keyword, requirements) {
     lat,
     lng
   };
+}
+async function enrichRouteReasons(route, requirements, theme) {
+  const apiKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return;
+  try {
+    const descriptions = await withTimeout(
+      askModelForPoiDescriptions(route, requirements, theme, apiKey),
+      3200
+    );
+    if (!descriptions) return;
+    for (const step of route.steps) {
+      const description = descriptions[step.poi.id];
+      if (!description) continue;
+      step.poi.reason = description;
+      step.note = description;
+    }
+  } catch {
+    return;
+  }
+}
+async function askModelForPoiDescriptions(route, requirements, theme, apiKey) {
+  const baseUrl = process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL2;
+  const model = process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL2;
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.35,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "\u4F60\u662F WeekendBuddy \u7684\u672C\u5730\u751F\u6D3B\u8DEF\u7EBF\u6587\u6848\u52A9\u624B\u3002",
+            "\u8BF7\u57FA\u4E8E\u9AD8\u5FB7\u5730\u70B9\u68C0\u7D22\u7ED3\u679C\uFF0C\u4E3A\u6BCF\u4E2A POI \u5199\u4E00\u53E5\u9002\u5408\u5C55\u793A\u5728\u8DEF\u7EBF\u5361\u7247\u4E0A\u7684\u4E2D\u6587\u7B80\u4ECB\u3002",
+            "\u53EA\u8FD4\u56DE\u4E25\u683C JSON\uFF0C\u5BF9\u8C61 key \u5FC5\u987B\u662F POI id\uFF0Cvalue \u662F 20-35 \u5B57\u4E2D\u6587\u7B80\u4ECB\u3002",
+            "\u4E0D\u8981\u7F16\u9020\u5177\u4F53\u4F18\u60E0\u3001\u6392\u961F\u3001\u8BC4\u4EF7\u6392\u540D\u6216\u672A\u7ED9\u51FA\u7684\u4E8B\u5B9E\u3002",
+            "\u7B80\u4ECB\u8981\u7ED3\u5408\u76F2\u76D2\u98CE\u683C\u3001\u5730\u70B9\u7C7B\u578B\u3001\u533A\u57DF\u548C\u7528\u6237\u504F\u597D\uFF0C\u8BF4\u660E\u4E3A\u4EC0\u4E48\u9002\u5408\u8FD9\u4E00\u7AD9\u3002"
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            theme,
+            requirements: {
+              rawText: requirements.rawText,
+              preferences: requirements.preferences,
+              constraints: requirements.constraints,
+              peopleType: requirements.peopleType
+            },
+            route: route.steps.map((step) => ({
+              id: step.poi.id,
+              name: step.poi.name,
+              type: step.poi.type,
+              subType: step.poi.subType,
+              area: step.poi.area,
+              businessDistrict: step.poi.businessDistrict,
+              tags: step.poi.tags,
+              fallbackReason: step.poi.reason
+            }))
+          })
+        }
+      ]
+    })
+  });
+  if (!response.ok) return {};
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) return {};
+  const parsed = safeParseJson2(content);
+  if (!parsed || typeof parsed !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(parsed).filter(([, value]) => typeof value === "string" && value.trim().length > 0).map(([key, value]) => [key, String(value).trim()])
+  );
+}
+function buildFallbackReason(item, type, keyword, requirements) {
+  const area = item.adname || extractDistrict(requirements.rawText) || requirements.city || "\u6DF1\u5733";
+  if (type === "\u8F7B\u98DF\u751C\u996E") return `${area}\u7684\u5496\u5561\u751C\u996E\u5019\u9009\uFF0C\u9002\u5408\u4F5C\u4E3A\u8DEF\u7EBF\u4E2D\u9014\u4F11\u606F\u548C\u8F7B\u677E\u804A\u5929\u7684\u4E00\u7AD9\u3002`;
+  if (type === "\u9910\u996E\u6B63\u9910") return `${area}\u7684\u9910\u996E\u5019\u9009\uFF0C\u9002\u5408\u8865\u4E0A\u6B63\u9910\u8282\u70B9\uFF0C\u8BA9\u534A\u65E5\u8DEF\u7EBF\u66F4\u5B8C\u6574\u3002`;
+  if (type === "\u6587\u5316\u4F53\u9A8C") return `${area}\u7684\u6587\u5316\u4F53\u9A8C\u70B9\uFF0C\u9002\u5408\u62CD\u7167\u3001\u770B\u5C55\u6216\u589E\u52A0\u4E00\u70B9\u5C0F\u4F17\u63A2\u7D22\u611F\u3002`;
+  if (type === "\u6237\u5916\u6563\u6B65") return `${area}\u7684\u6563\u6B65\u505C\u7559\u70B9\uFF0C\u9002\u5408\u653E\u6162\u8282\u594F\u5E76\u81EA\u7136\u8854\u63A5\u540E\u7EED\u884C\u7A0B\u3002`;
+  if (type === "\u62CD\u7167\u5730\u6807") return `${area}\u7684\u62CD\u7167\u6253\u5361\u5019\u9009\uFF0C\u9002\u5408\u4F5C\u4E3A\u300C${requirements.blindBoxTheme || "\u60CA\u559C\u76F2\u76D2"}\u300D\u91CC\u7684\u51FA\u7247\u8282\u70B9\u3002`;
+  if (/电影|IMAX|影城/.test(item.name || item.type || keyword)) return `${area}\u7684\u5F71\u9662\u5A31\u4E50\u70B9\uFF0C\u9002\u5408\u5BA4\u5185\u4F11\u95F2\u548C\u96E8\u5929\u7A33\u5B9A\u6267\u884C\u3002`;
+  return `${area}\u7684\u4F11\u95F2\u5A31\u4E50\u5019\u9009\uFF0C\u9002\u5408\u6309\u5F53\u524D\u76F2\u76D2\u98CE\u683C\u52A0\u5165\u5468\u672B\u8DEF\u7EBF\u3002`;
+}
+function safeParseJson2(content) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]);
+  }
 }
 function inferPoiType(item, keyword) {
   const text = `${item.type || ""} ${keyword} ${item.name || ""}`;
@@ -1214,8 +1330,8 @@ async function withTimeout(promise, timeoutMs) {
 }
 
 // new-agent-a-module/src/planner/llmReplanPlanner.ts
-var DEFAULT_MODEL2 = "deepseek-chat";
-var DEFAULT_BASE_URL2 = "https://api.deepseek.com/v1";
+var DEFAULT_MODEL3 = "deepseek-chat";
+var DEFAULT_BASE_URL3 = "https://api.deepseek.com/v1";
 async function replanRouteWithLLM(event, currentRoute, pois2, requirements, config = {}) {
   const targetStep = findTargetStep2(event, currentRoute);
   if (!targetStep) return null;
@@ -1271,10 +1387,10 @@ function getLlmApiKey2() {
   return process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
 }
 function getLlmBaseUrl2() {
-  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL2;
+  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL3;
 }
 function getLlmModel2() {
-  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL2;
+  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL3;
 }
 async function askModelForReplacement({
   apiKey,
@@ -1328,7 +1444,7 @@ async function askModelForReplacement({
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) return null;
-  const parsed = safeParseJson2(content);
+  const parsed = safeParseJson3(content);
   if (!parsed || typeof parsed !== "object") return null;
   return parsed;
 }
@@ -1365,7 +1481,7 @@ async function searchLivePoiCandidates(event, targetStep, requirements) {
     if (!response.ok) throw new Error(`AMap search failed: ${response.status}`);
     const data = await response.json();
     if (data.status !== "1" || !Array.isArray(data.pois)) return [];
-    const candidates = data.pois.filter((item) => isUsableAmapPoi2(item)).map((item, index) => poiFromAmap2(item, index, event, targetStep, requirements)).filter((poi) => Boolean(poi));
+    const candidates = data.pois.filter((item) => isUsableAmapPoi2(item)).map((item, index) => poiFromAmap2(item, index, event, targetStep, requirements)).filter((poi) => Boolean(poi && poi.id !== targetStep.poi.id && poi.name !== targetStep.poi.name)).filter((poi) => !/不要重复当前这个地点/.test(event.customPreference || "") || poi.name !== targetStep.poi.name);
     return candidates;
   } catch {
     return [];
@@ -1704,7 +1820,7 @@ function uniquePois2(pois2) {
     return true;
   });
 }
-function safeParseJson2(content) {
+function safeParseJson3(content) {
   try {
     return JSON.parse(content);
   } catch {

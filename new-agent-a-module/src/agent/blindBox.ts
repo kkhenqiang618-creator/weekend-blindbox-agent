@@ -27,6 +27,12 @@ const THEME_RULES: ThemeRule[] = [
     storyPrefix: "先找适合出片的地点，再用咖啡和美食把半日节奏接住。"
   },
   {
+    theme: "夜景微醺盒",
+    tags: ["夜景", "微醺", "简餐"],
+    match: (req) => hasAny(req.preferences, ["夜景", "微醺", "简餐"]) || /晚上|夜景|小酌|微醺/.test(req.rawText),
+    storyPrefix: "把晚间活动、夜景氛围和轻松简餐串起来，适合朋友或情侣不赶路地收尾。"
+  },
+  {
     theme: "省钱快乐盒",
     tags: ["预算友好", "性价比"],
     match: (req) => req.budgetMax <= 150 || req.constraints.includes("预算友好"),

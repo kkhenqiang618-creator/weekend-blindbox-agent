@@ -16,9 +16,19 @@ interface AmapPoi {
   location?: string;
 }
 
+interface ChatCompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+}
+
 const DEFAULT_TIMEOUT_MS = 6500;
 const AMAP_PLACE_URL = "https://restapi.amap.com/v3/place/text";
 const SHENZHEN_DISTRICTS = ["福田", "南山", "罗湖", "宝安", "龙岗", "龙华", "盐田", "坪山", "光明", "大鹏"];
+const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
 
 export async function buildLiveRoute(
   requirements: Requirements,
@@ -43,6 +53,7 @@ async function buildLiveRouteInner(
   if (candidates.length < 2) return null;
   const route = buildRoute(requirements, candidates, theme);
   if (route.steps.length < 2) return null;
+  await enrichRouteReasons(route, requirements, theme);
   return { route, candidates, keywords };
 }
 
@@ -51,6 +62,7 @@ function buildSearchKeywords(requirements: Requirements, theme: string): string[
   const areaPrefix = district ? `${district} ` : `${requirements.city || "深圳"} `;
   const themeKeywords: Record<string, string[]> = {
     "小众拍照吃货盒": ["小众咖啡", "拍照打卡", "甜品咖啡", "创意餐厅", "艺术空间"],
+    "夜景微醺盒": ["夜景餐厅", "bistro", "精酿酒馆", "简餐", "夜景打卡"],
     "雨天室内回血盒": ["购物中心", "密室逃脱", "电影院", "DIY手工", "咖啡馆"],
     "亲子轻松放电盒": ["亲子乐园", "儿童体验", "亲子餐厅", "室内游乐场", "公园"],
     "城市散步疗愈盒": ["书店咖啡", "公园散步", "美术馆", "创意园", "citywalk"],
@@ -121,7 +133,7 @@ function poiFromAmap(item: AmapPoi, index: number, keyword: string, requirements
     queueLevel: index % 4 === 0 ? "medium" : "low",
     distanceLevel: "3-10km",
     mockMeituanUrl: `mock://amap/${item.id || index}`,
-    reason: `Agent 根据「${keyword}」实时检索到该地点，并按「${requirements.blindBoxTheme || "惊喜盲盒"}」风格纳入候选。`,
+    reason: buildFallbackReason(item, type, keyword, requirements),
     blindBoxThemes: requirements.blindBoxTheme ? [requirements.blindBoxTheme] : undefined,
     availableTools: ["amapPlaceSearch", "queueCheck", "availabilityCheck"],
     bookingRequired: false,
@@ -130,6 +142,118 @@ function poiFromAmap(item: AmapPoi, index: number, keyword: string, requirements
     lat,
     lng
   };
+}
+
+async function enrichRouteReasons(route: Route, requirements: Requirements, theme: string): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return;
+
+  try {
+    const descriptions = await withTimeout(
+      askModelForPoiDescriptions(route, requirements, theme, apiKey),
+      3200
+    );
+    if (!descriptions) return;
+
+    for (const step of route.steps) {
+      const description = descriptions[step.poi.id];
+      if (!description) continue;
+      step.poi.reason = description;
+      step.note = description;
+    }
+  } catch {
+    return;
+  }
+}
+
+async function askModelForPoiDescriptions(
+  route: Route,
+  requirements: Requirements,
+  theme: string,
+  apiKey: string
+): Promise<Record<string, string>> {
+  const baseUrl = process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
+  const model = process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.35,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "你是 WeekendBuddy 的本地生活路线文案助手。",
+            "请基于高德地点检索结果，为每个 POI 写一句适合展示在路线卡片上的中文简介。",
+            "只返回严格 JSON，对象 key 必须是 POI id，value 是 20-35 字中文简介。",
+            "不要编造具体优惠、排队、评价排名或未给出的事实。",
+            "简介要结合盲盒风格、地点类型、区域和用户偏好，说明为什么适合这一站。"
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            theme,
+            requirements: {
+              rawText: requirements.rawText,
+              preferences: requirements.preferences,
+              constraints: requirements.constraints,
+              peopleType: requirements.peopleType
+            },
+            route: route.steps.map((step) => ({
+              id: step.poi.id,
+              name: step.poi.name,
+              type: step.poi.type,
+              subType: step.poi.subType,
+              area: step.poi.area,
+              businessDistrict: step.poi.businessDistrict,
+              tags: step.poi.tags,
+              fallbackReason: step.poi.reason
+            }))
+          })
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) return {};
+  const data = await response.json() as ChatCompletionResponse;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) return {};
+  const parsed = safeParseJson(content);
+  if (!parsed || typeof parsed !== "object") return {};
+
+  return Object.fromEntries(
+    Object.entries(parsed as Record<string, unknown>)
+      .filter(([, value]) => typeof value === "string" && value.trim().length > 0)
+      .map(([key, value]) => [key, String(value).trim()])
+  );
+}
+
+function buildFallbackReason(item: AmapPoi, type: string, keyword: string, requirements: Requirements): string {
+  const area = item.adname || extractDistrict(requirements.rawText) || requirements.city || "深圳";
+  if (type === "轻食甜饮") return `${area}的咖啡甜饮候选，适合作为路线中途休息和轻松聊天的一站。`;
+  if (type === "餐饮正餐") return `${area}的餐饮候选，适合补上正餐节点，让半日路线更完整。`;
+  if (type === "文化体验") return `${area}的文化体验点，适合拍照、看展或增加一点小众探索感。`;
+  if (type === "户外散步") return `${area}的散步停留点，适合放慢节奏并自然衔接后续行程。`;
+  if (type === "拍照地标") return `${area}的拍照打卡候选，适合作为「${requirements.blindBoxTheme || "惊喜盲盒"}」里的出片节点。`;
+  if (/电影|IMAX|影城/.test(item.name || item.type || keyword)) return `${area}的影院娱乐点，适合室内休闲和雨天稳定执行。`;
+  return `${area}的休闲娱乐候选，适合按当前盲盒风格加入周末路线。`;
+}
+
+function safeParseJson(content: string): unknown {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]);
+  }
 }
 
 function inferPoiType(item: AmapPoi, keyword: string): string {
