@@ -260,7 +260,7 @@ function ReplacementOptionsCard({
           <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-600">Replacement options</p>
           <h3 className="mt-2 text-2xl font-extrabold text-purple-950">推荐替换成哪个节点？</h3>
           <p className="mt-3 text-sm font-semibold leading-6 text-purple-800/72">
-            已为「{step.poi.name}」准备了 3-4 个替代方向。每个候选都说明为什么适合替换这一站。
+            已为「{step.poi.name}」准备了 3-4 个本地 POI 外的替代方向。每个候选都说明为什么适合替换这一站。
           </p>
         </div>
 
@@ -324,7 +324,7 @@ function ReplacementOptionsCard({
           <div>
             <p className="text-sm font-extrabold text-purple-950">使用首页的大模型配置判断</p>
             <p className="mt-1 text-xs font-semibold leading-5 text-purple-600/80">
-              确认后会优先让 {llmConfig.model || 'deepseek-chat'} 从真实 POI 候选池中判断替代点；如果模型不可用，会自动规则兜底。
+              直接确认会让 Agent 判断当前候选；填写补充描述后，会先调用高德地点检索扩展候选，再交给 {llmConfig.model || 'deepseek-chat'} 判断替代点。
             </p>
           </div>
           <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">

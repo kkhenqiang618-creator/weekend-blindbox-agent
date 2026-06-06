@@ -13,11 +13,11 @@ const DEFAULT_MODEL = "deepseek-chat";
 const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
 
 export async function parseIntentWithLLM(userInput: UserInput): Promise<Requirements | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = getLlmApiKey();
   if (!apiKey) return null;
 
-  const baseUrl = process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const baseUrl = getLlmBaseUrl();
+  const model = getLlmModel();
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -81,6 +81,18 @@ export async function parseIntentWithLLM(userInput: UserInput): Promise<Requirem
     },
     userInput
   );
+}
+
+function getLlmApiKey(): string | undefined {
+  return process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
+}
+
+function getLlmBaseUrl(): string {
+  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
+}
+
+function getLlmModel(): string {
+  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
 }
 
 function safeParseJson(content: string): unknown {

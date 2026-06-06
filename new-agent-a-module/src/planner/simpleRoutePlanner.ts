@@ -2,7 +2,8 @@ import type { PlanBChange, PlanBResult, Poi, Requirements, ReplanEvent, Route, R
 
 export function buildRoute(requirements: Requirements, pois: Poi[], theme: string): Route {
   const allCandidates = filterPois(requirements, pois, theme);
-  const routeCluster = selectRouteCluster(allCandidates, requirements, theme);
+  const explicitActivityTypes = getExplicitActivityTypes(requirements);
+  const routeCluster = selectRouteCluster(allCandidates, requirements, theme, explicitActivityTypes);
   const clusteredCandidates = routeCluster
     ? allCandidates.filter((poi) => poi.routeCluster === routeCluster)
     : allCandidates;
@@ -10,8 +11,10 @@ export function buildRoute(requirements: Requirements, pois: Poi[], theme: strin
   const steps: RouteStep[] = [];
   const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
   const maxMinutes = targetMinutes + 30;
-
-  const firstActivity = pickFirst(candidates, ["拍照地标", "户外散步", "文化体验", "休闲娱乐"]);
+  const firstActivity = pickFirst(
+    candidates,
+    explicitActivityTypes.length > 0 ? explicitActivityTypes : ["拍照地标", "户外散步", "文化体验", "休闲娱乐"]
+  );
   addStepIfFits(steps, firstActivity, maxMinutes);
 
   const breakStop = pickFirst(candidates, ["轻食甜饮"], usedIds(steps));
@@ -26,6 +29,8 @@ export function buildRoute(requirements: Requirements, pois: Poi[], theme: strin
   for (const candidate of candidates) {
     if (steps.length >= 4) break;
     if (usedIds(steps).includes(candidate.id)) continue;
+    if (candidate.type === "餐饮正餐" && steps.some((step) => step.poi.type === "餐饮正餐")) continue;
+    if (candidate.type === "轻食甜饮" && steps.some((step) => step.poi.type === "轻食甜饮")) continue;
     addStepIfFits(steps, candidate, maxMinutes);
   }
 
@@ -43,7 +48,7 @@ export function buildRoute(requirements: Requirements, pois: Poi[], theme: strin
     });
   });
 
-  return summarizeRoute(steps);
+  return summarizeRoute(steps, explicitActivityTypes);
 }
 
 export function filterPois(requirements: Requirements, pois: Poi[], theme?: string): Poi[] {
@@ -53,7 +58,7 @@ export function filterPois(requirements: Requirements, pois: Poi[], theme?: stri
     .filter((poi) => {
       if (isFarDistance(poi.distanceLevel) && requirements.distanceLevel !== "10km以上") return false;
       if (!requirements.distanceLevel || !poi.distanceLevel) return true;
-      if (requirements.distanceLevel === "3-10km") return isNearOrMediumDistance(poi.distanceLevel);
+      if (isNearOrMediumDistance(requirements.distanceLevel)) return isNearOrMediumDistance(poi.distanceLevel);
       return poi.distanceLevel === requirements.distanceLevel;
     })
     .filter((poi) => {
@@ -61,7 +66,7 @@ export function filterPois(requirements: Requirements, pois: Poi[], theme?: stri
       return true;
     })
     .filter((poi) => {
-      if (requirements.constraints.includes("室内优先")) {
+      if (requirements.constraints.includes("室内优先") || hasIndoorIntent(requirements)) {
         return poi.limits.includes("室内") || poi.limits.includes("雨天可去") || poi.weatherSensitive === false;
       }
       return true;
@@ -252,12 +257,134 @@ function inferRole(poi: Poi, index: number): RouteStep["role"] {
   return "activity";
 }
 
-function summarizeRoute(steps: RouteStep[]): Route {
+function summarizeRoute(steps: RouteStep[], preferredFirstTypes: string[] = []): Route {
+  const orderedSteps = orderStepsSpatially(steps, preferredFirstTypes);
+
   return {
-    totalMinutes: steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
-    totalBudget: steps.reduce((sum, step) => sum + step.poi.price, 0),
-    steps: steps.map((step, index) => ({ ...step, order: index + 1 }))
+    totalMinutes: orderedSteps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
+    totalBudget: orderedSteps.reduce((sum, step) => sum + step.poi.price, 0),
+    steps: orderedSteps.map((step, index) => ({
+      ...step,
+      order: index + 1,
+      role: inferRole(step.poi, index)
+    }))
   };
+}
+
+function getExplicitActivityTypes(requirements: Requirements): string[] {
+  const text = [
+    requirements.rawText,
+    ...requirements.preferences,
+    ...requirements.constraints
+  ].join(" ");
+  const types: string[] = [];
+
+  if (/室内.*(娱乐|玩|活动)|娱乐.*室内|电玩城|桌游|密室|KTV|电影|游戏|剧本/.test(text)) {
+    types.push("休闲娱乐");
+  }
+  if (/diy|DIY|手工|手作|陶艺|银饰|香薰|烘焙|画画|绘画/.test(text)) {
+    types.push("文化体验", "休闲娱乐");
+  }
+  if (/展|美术馆|博物馆|艺术|文化|书店/.test(text)) {
+    types.push("文化体验");
+  }
+  if (/拍照|打卡|出片|地标|夜景/.test(text)) {
+    types.push("拍照地标", "文化体验");
+  }
+  if (/公园|散步|户外|徒步|citywalk/i.test(text)) {
+    types.push("户外散步");
+  }
+
+  return [...new Set(types)];
+}
+
+function hasIndoorIntent(requirements: Requirements): boolean {
+  const text = [
+    requirements.rawText,
+    ...requirements.preferences,
+    ...requirements.constraints
+  ].join(" ");
+  return /室内|下雨|雨天/.test(text);
+}
+
+function orderStepsSpatially(steps: RouteStep[], preferredFirstTypes: string[] = []): RouteStep[] {
+  if (steps.length < 3 || steps.length > 5) return steps;
+  if (steps.some((step) => !hasCoordinate(step.poi))) return steps;
+
+  const permutations = permute(steps);
+  return permutations
+    .map((candidate) => ({
+      candidate,
+      score: scoreRouteOrder(candidate, preferredFirstTypes)
+    }))
+    .sort((a, b) => a.score - b.score)[0]?.candidate ?? steps;
+}
+
+function hasCoordinate(poi: Poi): boolean {
+  return typeof poi.lat === "number" && typeof poi.lng === "number";
+}
+
+function scoreRouteOrder(steps: RouteStep[], preferredFirstTypes: string[] = []): number {
+  const pathDistance = steps.slice(1).reduce((sum, step, index) => {
+    return sum + distanceKm(steps[index].poi, step.poi);
+  }, 0);
+  const startEndDistance = distanceKm(steps[0].poi, steps.at(-1)!.poi);
+  const rolePenalty = scoreRoleOrderPenalty(steps, preferredFirstTypes);
+  const backtrackPenalty = scoreBacktrackPenalty(steps);
+
+  return pathDistance - startEndDistance * 0.45 + rolePenalty + backtrackPenalty;
+}
+
+function scoreRoleOrderPenalty(steps: RouteStep[], preferredFirstTypes: string[] = []): number {
+  let penalty = 0;
+  const first = steps[0]?.poi;
+  const last = steps.at(-1)?.poi;
+  if (preferredFirstTypes.length > 0 && first && !preferredFirstTypes.includes(first.type)) penalty += 100;
+  if (first?.type === "餐饮正餐" || first?.type === "轻食甜饮") penalty += 2.5;
+  if (last?.type === "餐饮正餐") penalty += 1.2;
+
+  const mealIndex = steps.findIndex((step) => step.poi.type === "餐饮正餐");
+  const breakIndex = steps.findIndex((step) => step.poi.type === "轻食甜饮");
+  if (mealIndex >= 0 && breakIndex >= 0 && mealIndex < breakIndex) penalty += 0.8;
+  return penalty;
+}
+
+function scoreBacktrackPenalty(steps: RouteStep[]): number {
+  let penalty = 0;
+  for (let i = 2; i < steps.length; i += 1) {
+    const prevPrev = steps[i - 2].poi;
+    const current = steps[i].poi;
+    const skippedDistance = distanceKm(prevPrev, current);
+    const viaDistance = distanceKm(prevPrev, steps[i - 1].poi) + distanceKm(steps[i - 1].poi, current);
+    if (skippedDistance > 0 && viaDistance / skippedDistance > 2.2) {
+      penalty += 1.5;
+    }
+  }
+  return penalty;
+}
+
+function distanceKm(a: Poi, b: Poi): number {
+  if (!hasCoordinate(a) || !hasCoordinate(b)) return 0;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(b.lat! - a.lat!);
+  const dLng = toRadians(b.lng! - a.lng!);
+  const lat1 = toRadians(a.lat!);
+  const lat2 = toRadians(b.lat!);
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function toRadians(value: number): number {
+  return value * Math.PI / 180;
+}
+
+function permute<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, index) => {
+    const rest = [...items.slice(0, index), ...items.slice(index + 1)];
+    return permute(rest).map((candidate) => [item, ...candidate]);
+  });
 }
 
 function scorePoi(poi: Poi, requirements: Requirements, theme?: string): number {
@@ -288,7 +415,7 @@ function scorePoi(poi: Poi, requirements: Requirements, theme?: string): number 
   return score;
 }
 
-function selectRouteCluster(candidates: Poi[], requirements: Requirements, theme?: string): string | undefined {
+function selectRouteCluster(candidates: Poi[], requirements: Requirements, theme?: string, requiredTypes: string[] = []): string | undefined {
   const clusters = new Map<string, { score: number; types: Set<string>; count: number }>();
 
   for (const poi of candidates) {
@@ -302,6 +429,7 @@ function selectRouteCluster(candidates: Poi[], requirements: Requirements, theme
 
   return [...clusters.entries()]
     .filter(([, bucket]) => bucket.count >= 2)
+    .filter(([, bucket]) => requiredTypes.length === 0 || requiredTypes.some((type) => bucket.types.has(type)))
     .sort(([, a], [, b]) => {
       const scoreA = a.score + a.types.size * 35 + Math.min(a.count, 6) * 8;
       const scoreB = b.score + b.types.size * 35 + Math.min(b.count, 6) * 8;
@@ -329,10 +457,12 @@ function findReplacement(
 ): Poi | undefined {
   const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
+  const requestedTypes = getRequestedReplacementTypes(event, targetPoi);
   const directReplacement = pois.find((poi) =>
     replaceableIds.includes(poi.id)
     && !usedIds.has(poi.id)
     && isNearEnoughForReplacement(poi, targetPoi)
+    && matchesRequestedType(poi, requestedTypes)
   );
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
 
@@ -340,7 +470,7 @@ function findReplacement(
     .filter((poi) => !usedIds.has(poi.id))
     .filter((poi) => poi.fitPeople.includes(requirements.peopleType))
     .filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40))
-    .filter((poi) => poi.type === targetPoi.type || event.type === "rain")
+    .filter((poi) => matchesRequestedType(poi, requestedTypes) || (!event.customPreference?.trim() && (poi.type === targetPoi.type || event.type === "rain")))
     .filter((poi) => isNearEnoughForReplacement(poi, targetPoi))
     .filter((poi) => matchesEvent(event, poi))
     .sort((a, b) => {
@@ -352,6 +482,39 @@ function findReplacement(
     })[0];
 }
 
+function getRequestedReplacementTypes(event: ReplanEvent, targetPoi: Poi): string[] {
+  const text = event.customPreference || event.message || "";
+  const types: string[] = [];
+
+  if (/室内.*(娱乐|玩|活动)|娱乐.*室内|电玩城|桌游|密室|KTV|电影|游戏|剧本/.test(text)) {
+    types.push("休闲娱乐");
+  }
+  if (/diy|DIY|手工|手作|陶艺|银饰|香薰|烘焙|画画|绘画/.test(text)) {
+    types.push("文化体验", "休闲娱乐");
+  }
+  if (/展|美术馆|博物馆|艺术|文化|书店/.test(text)) {
+    types.push("文化体验");
+  }
+  if (/咖啡|奶茶|甜|饮|茶/.test(text)) {
+    types.push("轻食甜饮");
+  }
+  if (/吃|饭|餐|火锅|烧烤|菜/.test(text)) {
+    types.push("餐饮正餐");
+  }
+  if (/拍照|打卡|出片|地标|夜景/.test(text)) {
+    types.push("拍照地标", "文化体验");
+  }
+  if (/公园|散步|户外|徒步|citywalk/i.test(text)) {
+    types.push("户外散步");
+  }
+
+  return [...new Set(types.length > 0 ? types : [targetPoi.type])];
+}
+
+function matchesRequestedType(poi: Poi, requestedTypes: string[]): boolean {
+  return requestedTypes.length === 0 || requestedTypes.includes(poi.type);
+}
+
 function isNearEnoughForReplacement(candidate: Poi, targetPoi: Poi): boolean {
   if (isFarDistance(candidate.distanceLevel)) return false;
   if (targetPoi.routeCluster && candidate.routeCluster) return candidate.routeCluster === targetPoi.routeCluster;
@@ -360,11 +523,11 @@ function isNearEnoughForReplacement(candidate: Poi, targetPoi: Poi): boolean {
 }
 
 function isNearDistance(distanceLevel?: string): boolean {
-  return distanceLevel === "3km内" || distanceLevel === "3km以内" || distanceLevel === "near";
+  return distanceLevel === "3km内" || distanceLevel === "3km以内" || distanceLevel === "near" || distanceLevel === "近" || distanceLevel === "附近" || distanceLevel === "不要太远";
 }
 
 function isMediumDistance(distanceLevel?: string): boolean {
-  return distanceLevel === "3-10km" || distanceLevel === "medium" || !distanceLevel;
+  return distanceLevel === "3-10km" || distanceLevel === "medium" || distanceLevel === "中等" || !distanceLevel;
 }
 
 function isNearOrMediumDistance(distanceLevel?: string): boolean {

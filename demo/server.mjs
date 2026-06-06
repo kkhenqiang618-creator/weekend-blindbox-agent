@@ -6,11 +6,14 @@
  */
 
 import http from 'node:http';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AGENT_MODULE_PATH = resolve(__dirname, '..', 'new-agent-a-module');
+
+loadLocalEnv();
 
 // Dynamic imports
 let generatePlan, executePlan, handleReplan, pois;
@@ -99,6 +102,31 @@ function sanitizeLlmConfig(config) {
     baseUrl: baseUrl || undefined,
     model: model || undefined,
   };
+}
+
+function loadLocalEnv() {
+  const envFiles = [
+    resolve(__dirname, '.env.local'),
+    resolve(__dirname, '.env'),
+    resolve(__dirname, '..', '.env.local'),
+    resolve(__dirname, '..', '.env'),
+  ];
+
+  for (const envFile of envFiles) {
+    if (!existsSync(envFile)) continue;
+    const content = readFileSync(envFile, 'utf8');
+    for (const line of content.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const equalIndex = trimmed.indexOf('=');
+      if (equalIndex <= 0) continue;
+      const key = trimmed.slice(0, equalIndex).trim();
+      const value = trimmed.slice(equalIndex + 1).trim().replace(/^["']|["']$/g, '');
+      if (key && value && !process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  }
 }
 
 const server = http.createServer(async (req, res) => {

@@ -7,6 +7,7 @@ import RouteTimeline from './components/RouteTimeline';
 import PlanBComparison from './components/PlanBComparison';
 import ExecutionPanel from './components/ExecutionPanel';
 import RouteReviewPanel from './components/RouteReviewPanel';
+import BlindBoxCard from './components/BlindBoxCard';
 
 interface HistoryEntry {
   step: AppStep;
@@ -244,6 +245,7 @@ export default function App() {
 
         {step === 'plan' && plan && (
           <section className="mx-auto max-w-5xl space-y-5 animate-slide-up">
+            <BlindBoxCard blindBox={plan.blindBox} requirements={plan.requirements} />
             <RouteTimeline route={plan.route} />
             <div className="rounded-[1.5rem] border border-white/60 bg-white/70 p-4 shadow-[0_18px_54px_rgba(91,33,182,0.12)] backdrop-blur-xl">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

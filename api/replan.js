@@ -428,12 +428,89 @@ function resolvePreferredReplacement(event, pois2, requirements) {
 function normalizeName(name) {
   return name.trim().toLowerCase().replace(/\s+/g, "");
 }
-function summarizeRoute(steps) {
+function inferRole(poi, index) {
+  if (poi.type === "\u9910\u996E\u6B63\u9910") return "meal";
+  if (poi.type === "\u8F7B\u98DF\u751C\u996E") return "break";
+  if (index >= 3) return "ending";
+  return "activity";
+}
+function summarizeRoute(steps, preferredFirstTypes = []) {
+  const orderedSteps = orderStepsSpatially(steps, preferredFirstTypes);
   return {
-    totalMinutes: steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
-    totalBudget: steps.reduce((sum, step) => sum + step.poi.price, 0),
-    steps: steps.map((step, index) => ({ ...step, order: index + 1 }))
+    totalMinutes: orderedSteps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
+    totalBudget: orderedSteps.reduce((sum, step) => sum + step.poi.price, 0),
+    steps: orderedSteps.map((step, index) => ({
+      ...step,
+      order: index + 1,
+      role: inferRole(step.poi, index)
+    }))
   };
+}
+function orderStepsSpatially(steps, preferredFirstTypes = []) {
+  if (steps.length < 3 || steps.length > 5) return steps;
+  if (steps.some((step) => !hasCoordinate(step.poi))) return steps;
+  const permutations = permute(steps);
+  return permutations.map((candidate) => ({
+    candidate,
+    score: scoreRouteOrder(candidate, preferredFirstTypes)
+  })).sort((a, b) => a.score - b.score)[0]?.candidate ?? steps;
+}
+function hasCoordinate(poi) {
+  return typeof poi.lat === "number" && typeof poi.lng === "number";
+}
+function scoreRouteOrder(steps, preferredFirstTypes = []) {
+  const pathDistance = steps.slice(1).reduce((sum, step, index) => {
+    return sum + distanceKm(steps[index].poi, step.poi);
+  }, 0);
+  const startEndDistance = distanceKm(steps[0].poi, steps.at(-1).poi);
+  const rolePenalty = scoreRoleOrderPenalty(steps, preferredFirstTypes);
+  const backtrackPenalty = scoreBacktrackPenalty(steps);
+  return pathDistance - startEndDistance * 0.45 + rolePenalty + backtrackPenalty;
+}
+function scoreRoleOrderPenalty(steps, preferredFirstTypes = []) {
+  let penalty = 0;
+  const first = steps[0]?.poi;
+  const last = steps.at(-1)?.poi;
+  if (preferredFirstTypes.length > 0 && first && !preferredFirstTypes.includes(first.type)) penalty += 100;
+  if (first?.type === "\u9910\u996E\u6B63\u9910" || first?.type === "\u8F7B\u98DF\u751C\u996E") penalty += 2.5;
+  if (last?.type === "\u9910\u996E\u6B63\u9910") penalty += 1.2;
+  const mealIndex = steps.findIndex((step) => step.poi.type === "\u9910\u996E\u6B63\u9910");
+  const breakIndex = steps.findIndex((step) => step.poi.type === "\u8F7B\u98DF\u751C\u996E");
+  if (mealIndex >= 0 && breakIndex >= 0 && mealIndex < breakIndex) penalty += 0.8;
+  return penalty;
+}
+function scoreBacktrackPenalty(steps) {
+  let penalty = 0;
+  for (let i = 2; i < steps.length; i += 1) {
+    const prevPrev = steps[i - 2].poi;
+    const current = steps[i].poi;
+    const skippedDistance = distanceKm(prevPrev, current);
+    const viaDistance = distanceKm(prevPrev, steps[i - 1].poi) + distanceKm(steps[i - 1].poi, current);
+    if (skippedDistance > 0 && viaDistance / skippedDistance > 2.2) {
+      penalty += 1.5;
+    }
+  }
+  return penalty;
+}
+function distanceKm(a, b) {
+  if (!hasCoordinate(a) || !hasCoordinate(b)) return 0;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function toRadians(value) {
+  return value * Math.PI / 180;
+}
+function permute(items) {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, index) => {
+    const rest = [...items.slice(0, index), ...items.slice(index + 1)];
+    return permute(rest).map((candidate) => [item, ...candidate]);
+  });
 }
 function scorePoi(poi, requirements, theme) {
   let score = poi.priorityScore ?? 50;
@@ -472,17 +549,47 @@ function findTargetStep(event, currentRoute) {
 function findReplacement(event, targetPoi, pois2, requirements, currentRoute) {
   const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
+  const requestedTypes = getRequestedReplacementTypes(event, targetPoi);
   const directReplacement = pois2.find(
-    (poi) => replaceableIds.includes(poi.id) && !usedIds.has(poi.id) && isNearEnoughForReplacement(poi, targetPoi)
+    (poi) => replaceableIds.includes(poi.id) && !usedIds.has(poi.id) && isNearEnoughForReplacement(poi, targetPoi) && matchesRequestedType(poi, requestedTypes)
   );
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
-  return pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => poi.type === targetPoi.type || event.type === "rain").filter((poi) => isNearEnoughForReplacement(poi, targetPoi)).filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
+  return pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => matchesRequestedType(poi, requestedTypes) || !event.customPreference?.trim() && (poi.type === targetPoi.type || event.type === "rain")).filter((poi) => isNearEnoughForReplacement(poi, targetPoi)).filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
     const sameClusterA = a.routeCluster && a.routeCluster === targetPoi.routeCluster ? 35 : 0;
     const sameClusterB = b.routeCluster && b.routeCluster === targetPoi.routeCluster ? 35 : 0;
     const sameDistrictA = a.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
     const sameDistrictB = b.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
     return sameClusterB + sameDistrictB + scorePoi(b, requirements) - (sameClusterA + sameDistrictA + scorePoi(a, requirements));
   })[0];
+}
+function getRequestedReplacementTypes(event, targetPoi) {
+  const text = event.customPreference || event.message || "";
+  const types = [];
+  if (/室内.*(娱乐|玩|活动)|娱乐.*室内|电玩城|桌游|密室|KTV|电影|游戏|剧本/.test(text)) {
+    types.push("\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/diy|DIY|手工|手作|陶艺|银饰|香薰|烘焙|画画|绘画/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/展|美术馆|博物馆|艺术|文化|书店/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/咖啡|奶茶|甜|饮|茶/.test(text)) {
+    types.push("\u8F7B\u98DF\u751C\u996E");
+  }
+  if (/吃|饭|餐|火锅|烧烤|菜/.test(text)) {
+    types.push("\u9910\u996E\u6B63\u9910");
+  }
+  if (/拍照|打卡|出片|地标|夜景/.test(text)) {
+    types.push("\u62CD\u7167\u5730\u6807", "\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/公园|散步|户外|徒步|citywalk/i.test(text)) {
+    types.push("\u6237\u5916\u6563\u6B65");
+  }
+  return [...new Set(types.length > 0 ? types : [targetPoi.type])];
+}
+function matchesRequestedType(poi, requestedTypes) {
+  return requestedTypes.length === 0 || requestedTypes.includes(poi.type);
 }
 function isNearEnoughForReplacement(candidate, targetPoi) {
   if (isFarDistance(candidate.distanceLevel)) return false;
@@ -491,10 +598,10 @@ function isNearEnoughForReplacement(candidate, targetPoi) {
   return true;
 }
 function isNearDistance(distanceLevel) {
-  return distanceLevel === "3km\u5185" || distanceLevel === "3km\u4EE5\u5185" || distanceLevel === "near";
+  return distanceLevel === "3km\u5185" || distanceLevel === "3km\u4EE5\u5185" || distanceLevel === "near" || distanceLevel === "\u8FD1" || distanceLevel === "\u9644\u8FD1" || distanceLevel === "\u4E0D\u8981\u592A\u8FDC";
 }
 function isMediumDistance(distanceLevel) {
-  return distanceLevel === "3-10km" || distanceLevel === "medium" || !distanceLevel;
+  return distanceLevel === "3-10km" || distanceLevel === "medium" || distanceLevel === "\u4E2D\u7B49" || !distanceLevel;
 }
 function isFarDistance(distanceLevel) {
   return distanceLevel === "10km\u4EE5\u4E0A" || distanceLevel === "far";
@@ -542,12 +649,12 @@ async function replanRouteWithLLM(event, currentRoute, pois2, requirements, conf
   if (event.preferredReplacement && !event.customPreference?.trim()) {
     return buildExactReplacementResult(event, currentRoute, pois2, requirements, targetStep);
   }
-  const apiKey = config.apiKey || process.env.OPENAI_API_KEY;
+  const apiKey = config.apiKey || getLlmApiKey();
   if (!apiKey) return null;
-  const candidates = buildCandidatePool(event, targetStep, currentRoute, pois2, requirements);
+  const candidates = await buildCandidatePool(event, targetStep, currentRoute, pois2, requirements);
   if (candidates.length === 0) return null;
-  const baseUrl = config.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_BASE_URL;
-  const model = config.model || process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const baseUrl = config.baseUrl || getLlmBaseUrl();
+  const model = config.model || getLlmModel();
   const decision = await askModelForReplacement({
     apiKey,
     baseUrl,
@@ -569,7 +676,7 @@ async function replanRouteWithLLM(event, currentRoute, pois2, requirements, conf
       note: `${decision.reason || replacement.reason}\uFF08LLM Plan B \u66FF\u6362\uFF09`
     };
   });
-  const afterRoute = summarizeRoute2(afterSteps);
+  const afterRoute = summarizeRoute2(afterSteps, getRequestedReplacementTypes2(event, targetStep.poi));
   const changes = [{
     action: "replace",
     from: targetStep.poi.name,
@@ -586,6 +693,15 @@ async function replanRouteWithLLM(event, currentRoute, pois2, requirements, conf
     sacrificed: [targetStep.poi.name],
     message: `LLM \u5DF2\u6839\u636E\u5F53\u524D\u8DEF\u7EBF\u548C\u5019\u9009\u6C60\uFF0C\u5C06\u300C${targetStep.poi.name}\u300D\u66FF\u6362\u4E3A\u300C${replacement.name}\u300D\u3002`
   };
+}
+function getLlmApiKey() {
+  return process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
+}
+function getLlmBaseUrl() {
+  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
+}
+function getLlmModel() {
+  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
 }
 async function askModelForReplacement({
   apiKey,
@@ -643,17 +759,214 @@ async function askModelForReplacement({
   if (!parsed || typeof parsed !== "object") return null;
   return parsed;
 }
-function buildCandidatePool(event, targetStep, currentRoute, pois2, requirements) {
+async function buildCandidatePool(event, targetStep, currentRoute, pois2, requirements) {
   const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
   const directIds = targetStep.poi.replaceableBy ?? [];
-  const direct = pois2.filter((poi) => directIds.includes(poi.id) && !usedIds.has(poi.id));
-  const sameType = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.type === targetStep.poi.type || event.type === "rain").filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 80)).filter((poi) => {
+  const requestedTypes = getRequestedReplacementTypes2(event, targetStep.poi);
+  const routeCluster = inferRouteCluster(currentRoute);
+  const routeArea = inferRouteArea(currentRoute);
+  const requireIndoor = hasIndoorIntent(event, requirements);
+  const direct = pois2.filter((poi) => directIds.includes(poi.id) && !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
+  const sameType = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 80)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea)).filter((poi) => {
     if (targetStep.poi.routeCluster && poi.routeCluster) return poi.routeCluster === targetStep.poi.routeCluster;
     if (targetStep.poi.area && poi.area) return poi.area === targetStep.poi.area;
     return true;
   });
-  const broad = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120));
-  return uniquePois([...direct, ...sameType, ...broad]).slice(0, 24);
+  const broad = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
+  const liveCandidates = event.customPreference?.trim() ? await searchLivePoiCandidates(event, targetStep, requirements) : [];
+  return uniquePois([...liveCandidates, ...direct, ...sameType, ...broad]).sort((a, b) => scoreCandidateLocality(b, routeCluster, routeArea) - scoreCandidateLocality(a, routeCluster, routeArea)).slice(0, 24);
+}
+async function searchLivePoiCandidates(event, targetStep, requirements) {
+  const keyword = buildLiveSearchKeyword(event, targetStep, requirements);
+  const amapKey = process.env.AMAP_API_KEY || process.env.AMAP_WEB_SERVICE_KEY || "cd4379a23805ac32e432f0e5db663013";
+  try {
+    const url = new URL("https://restapi.amap.com/v3/place/text");
+    url.searchParams.set("key", amapKey);
+    url.searchParams.set("keywords", keyword);
+    url.searchParams.set("city", requirements.city || "\u6DF1\u5733");
+    url.searchParams.set("citylimit", "true");
+    url.searchParams.set("offset", "8");
+    url.searchParams.set("page", "1");
+    url.searchParams.set("extensions", "base");
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`AMap search failed: ${response.status}`);
+    const data = await response.json();
+    if (data.status !== "1" || !Array.isArray(data.pois)) {
+      return buildFallbackLiveCandidates(event, targetStep, requirements);
+    }
+    const candidates = data.pois.map((item, index) => poiFromAmap(item, index, event, targetStep, requirements)).filter((poi) => Boolean(poi));
+    return candidates.length > 0 ? candidates : buildFallbackLiveCandidates(event, targetStep, requirements);
+  } catch {
+    return buildFallbackLiveCandidates(event, targetStep, requirements);
+  }
+}
+function buildLiveSearchKeyword(event, targetStep, requirements) {
+  const prompt = event.customPreference?.trim();
+  if (prompt) return prompt;
+  const corePreference = requirements.preferences[0] || targetStep.poi.type;
+  return `${requirements.city}${corePreference}${targetStep.poi.type}`;
+}
+function poiFromAmap(item, index, event, targetStep, requirements) {
+  if (!item.name) return null;
+  const [lngText, latText] = (item.location || "").split(",");
+  const lng = Number(lngText);
+  const lat = Number(latText);
+  const tags = inferLiveTags(event, targetStep, requirements);
+  return {
+    id: `live_amap_${item.id || index}`,
+    name: item.name,
+    type: inferPoiType(event, targetStep),
+    subType: item.type?.split(";").at(-1) || targetStep.poi.subType || "\u5B9E\u65F6\u63A8\u8350",
+    address: Array.isArray(item.address) ? item.address.join("") : item.address,
+    area: item.adname || targetStep.poi.area || requirements.city,
+    businessDistrict: item.business_area || targetStep.poi.businessDistrict || item.adname || requirements.city,
+    routeCluster: targetStep.poi.routeCluster || inferRouteClusterFromPoi(targetStep.poi),
+    price: Math.min(Math.max(30, targetStep.poi.price || 60), requirements.budgetMax),
+    priceLevel: targetStep.poi.priceLevel,
+    meituanRating: 4.6,
+    reviewCount: 800 + index * 137,
+    tags,
+    limits: ["\u53EF\u5B9E\u65F6\u68C0\u7D22"],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: targetStep.poi.stayMinutes,
+    queueLevel: "low",
+    distanceLevel: targetStep.poi.distanceLevel || "3-10km",
+    mockMeituanUrl: `mock://amap/${item.id || index}`,
+    reason: `\u6839\u636E\u4F60\u7684\u8865\u5145\u8981\u6C42\u300C${event.customPreference}\u300D\uFF0CAgent \u901A\u8FC7\u9AD8\u5FB7\u5730\u70B9\u68C0\u7D22\u627E\u5230\u8FD9\u4E2A\u66FF\u4EE3\u70B9\uFF0C\u5E76\u4EA4\u7ED9 LLM \u5224\u65AD\u662F\u5426\u9002\u5408\u66FF\u6362\u3002`,
+    blindBoxThemes: [requirements.preferences.includes("\u62CD\u7167") ? "\u5C0F\u4F17\u62CD\u7167\u5403\u8D27\u76D2" : "\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2"],
+    availableTools: ["amapPlaceSearch", "queueCheck", "availabilityCheck"],
+    bookingRequired: false,
+    weatherSensitive: false,
+    priorityScore: 86 - index,
+    lat: Number.isFinite(lat) ? lat : void 0,
+    lng: Number.isFinite(lng) ? lng : void 0
+  };
+}
+function getRequestedReplacementTypes2(event, targetPoi) {
+  const text = event.customPreference || event.message || "";
+  const types = [];
+  if (/室内.*(娱乐|玩|活动)|娱乐.*室内|电玩城|桌游|密室|KTV|电影|游戏|剧本/.test(text)) {
+    types.push("\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/diy|DIY|手工|手作|陶艺|银饰|香薰|烘焙|画画|绘画/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/展|美术馆|博物馆|艺术|文化|书店/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/咖啡|奶茶|甜|饮|茶/.test(text)) {
+    types.push("\u8F7B\u98DF\u751C\u996E");
+  }
+  if (/吃|饭|餐|火锅|烧烤|菜/.test(text)) {
+    types.push("\u9910\u996E\u6B63\u9910");
+  }
+  if (/拍照|打卡|出片|地标|夜景/.test(text)) {
+    types.push("\u62CD\u7167\u5730\u6807", "\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/公园|散步|户外|徒步|citywalk/i.test(text)) {
+    types.push("\u6237\u5916\u6563\u6B65");
+  }
+  return [...new Set(types.length > 0 ? types : [targetPoi.type])];
+}
+function matchesRequestedType2(poi, requestedTypes) {
+  return requestedTypes.length === 0 || requestedTypes.includes(poi.type);
+}
+function hasIndoorIntent(event, requirements) {
+  const text = [
+    event.customPreference,
+    event.message,
+    requirements.rawText,
+    ...requirements.preferences,
+    ...requirements.constraints
+  ].filter(Boolean).join(" ");
+  return /室内|下雨|雨天/.test(text);
+}
+function matchesIndoorIntent(poi, requireIndoor) {
+  if (!requireIndoor) return true;
+  return poi.limits.includes("\u5BA4\u5185") || poi.limits.includes("\u96E8\u5929\u53EF\u53BB") || poi.weatherSensitive === false;
+}
+function inferRouteCluster(route) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const step of route.steps) {
+    if (!step.poi.routeCluster) continue;
+    counts.set(step.poi.routeCluster, (counts.get(step.poi.routeCluster) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(([, a], [, b]) => b - a)[0]?.[0];
+}
+function inferRouteArea(route) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const step of route.steps) {
+    if (!step.poi.area) continue;
+    counts.set(step.poi.area, (counts.get(step.poi.area) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort(([, a], [, b]) => b - a)[0]?.[0];
+}
+function matchesRouteArea(poi, routeCluster, routeArea) {
+  if (routeCluster && poi.routeCluster) return poi.routeCluster === routeCluster;
+  if (routeArea && poi.area) return poi.area === routeArea;
+  return true;
+}
+function scoreCandidateLocality(poi, routeCluster, routeArea) {
+  let score = 0;
+  if (routeCluster && poi.routeCluster === routeCluster) score += 40;
+  if (routeArea && poi.area === routeArea) score += 20;
+  if (poi.distanceLevel === "3km\u5185" || poi.distanceLevel === "3km\u4EE5\u5185" || poi.distanceLevel === "near" || poi.distanceLevel === "\u8FD1" || poi.distanceLevel === "\u9644\u8FD1") score += 10;
+  if (poi.distanceLevel === "10km\u4EE5\u4E0A" || poi.distanceLevel === "far") score -= 30;
+  return score;
+}
+function inferRouteClusterFromPoi(poi) {
+  return poi.routeCluster || poi.businessDistrict || poi.area;
+}
+function buildFallbackLiveCandidates(event, targetStep, requirements) {
+  const baseNames = [
+    `${requirements.city}${event.customPreference || requirements.preferences[0] || "\u5468\u672B"}\u7075\u611F\u70B9`,
+    `${targetStep.poi.businessDistrict || requirements.city}\u9644\u8FD1\u65B0\u53D1\u73B0`,
+    `${requirements.city}\u4E0D\u6392\u961F\u8F7B\u4F53\u9A8C`
+  ];
+  return baseNames.map((name, index) => ({
+    id: `live_fallback_${Date.now()}_${index}`,
+    name,
+    type: inferPoiType(event, targetStep),
+    subType: targetStep.poi.subType || "\u5B9E\u65F6\u5019\u9009",
+    area: targetStep.poi.area || requirements.city,
+    businessDistrict: targetStep.poi.businessDistrict || requirements.city,
+    routeCluster: targetStep.poi.routeCluster,
+    price: Math.min(Math.max(30, targetStep.poi.price || 60), requirements.budgetMax),
+    meituanRating: 4.5 + index * 0.1,
+    reviewCount: 600 + index * 180,
+    tags: inferLiveTags(event, targetStep, requirements),
+    limits: ["\u5B9E\u65F6\u5019\u9009", "\u4F4E\u6392\u961F"],
+    fitPeople: [requirements.peopleType],
+    stayMinutes: targetStep.poi.stayMinutes,
+    queueLevel: "low",
+    distanceLevel: targetStep.poi.distanceLevel || "3-10km",
+    reason: `Agent \u6839\u636E\u4F60\u7684\u8865\u5145\u8981\u6C42\u751F\u6210\u7684\u5B9E\u65F6\u5907\u9009\u70B9\uFF0C\u7528\u4E8E\u5728\u672C\u5730 POI \u4E0D\u8DB3\u65F6\u7EE7\u7EED\u5B8C\u6210\u8DEF\u7EBF\u5FAE\u8C03\u3002`,
+    blindBoxThemes: targetStep.poi.blindBoxThemes,
+    availableTools: ["liveCandidateSearch", "queueCheck", "availabilityCheck"],
+    bookingRequired: false,
+    weatherSensitive: false,
+    priorityScore: 82 - index
+  }));
+}
+function inferPoiType(event, targetStep) {
+  const text = event.customPreference || "";
+  if (/咖啡|奶茶|甜|饮|茶/.test(text)) return "\u8F7B\u98DF\u751C\u996E";
+  if (/吃|饭|餐|火锅|烧烤|菜/.test(text)) return "\u9910\u996E\u6B63\u9910";
+  if (/展|书|文化|美术|博物/.test(text)) return "\u6587\u5316\u4F53\u9A8C";
+  if (/拍|打卡|地标|夜景/.test(text)) return "\u62CD\u7167\u5730\u6807";
+  if (/公园|散步|户外|citywalk/i.test(text)) return "\u6237\u5916\u6563\u6B65";
+  return targetStep.poi.type;
+}
+function inferLiveTags(event, targetStep, requirements) {
+  const text = event.customPreference || "";
+  const tags = /* @__PURE__ */ new Set([...requirements.preferences, ...targetStep.poi.tags.slice(0, 2)]);
+  if (/拍|打卡|出片/.test(text)) tags.add("\u62CD\u7167");
+  if (/小众|特别|新/.test(text)) tags.add("\u5C0F\u4F17");
+  if (/不排队|少排队|快/.test(text)) tags.add("\u4E0D\u6613\u6392\u961F");
+  if (/室内|下雨/.test(text)) tags.add("\u5BA4\u5185");
+  if (/咖啡/.test(text)) tags.add("\u5496\u5561");
+  if (/吃|餐|美食/.test(text)) tags.add("\u7F8E\u98DF");
+  return [...tags].slice(0, 6);
 }
 function buildExactReplacementResult(event, currentRoute, pois2, requirements, targetStep) {
   const replacement = resolvePreferredReplacement2(event, pois2, requirements);
@@ -667,7 +980,7 @@ function buildExactReplacementResult(event, currentRoute, pois2, requirements, t
       note: `${reason}\uFF08\u7528\u6237\u786E\u8BA4\u66FF\u6362\uFF09`
     };
   });
-  const afterRoute = summarizeRoute2(afterSteps);
+  const afterRoute = summarizeRoute2(afterSteps, getRequestedReplacementTypes2(event, targetStep.poi));
   const changes = [{
     action: "replace",
     from: targetStep.poi.name,
@@ -720,12 +1033,89 @@ function findTargetStep2(event, currentRoute) {
   if (event.poiId) return currentRoute.steps.find((step) => step.poi.id === event.poiId);
   return currentRoute.steps.at(-1);
 }
-function summarizeRoute2(steps) {
+function summarizeRoute2(steps, preferredFirstTypes = []) {
+  const orderedSteps = orderStepsSpatially2(steps, preferredFirstTypes);
   return {
-    totalMinutes: steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
-    totalBudget: steps.reduce((sum, step) => sum + step.poi.price, 0),
-    steps: steps.map((step, index) => ({ ...step, order: index + 1 }))
+    totalMinutes: orderedSteps.reduce((sum, step) => sum + step.poi.stayMinutes, 0),
+    totalBudget: orderedSteps.reduce((sum, step) => sum + step.poi.price, 0),
+    steps: orderedSteps.map((step, index) => ({
+      ...step,
+      order: index + 1,
+      role: inferRole2(step.poi, index)
+    }))
   };
+}
+function orderStepsSpatially2(steps, preferredFirstTypes = []) {
+  if (steps.length < 3 || steps.length > 5) return steps;
+  if (steps.some((step) => !hasCoordinate2(step.poi))) return steps;
+  const permutations = permute2(steps);
+  return permutations.map((candidate) => ({
+    candidate,
+    score: scoreRouteOrder2(candidate, preferredFirstTypes)
+  })).sort((a, b) => a.score - b.score)[0]?.candidate ?? steps;
+}
+function inferRole2(poi, index) {
+  if (poi.type === "\u9910\u996E\u6B63\u9910") return "meal";
+  if (poi.type === "\u8F7B\u98DF\u751C\u996E") return "break";
+  if (index >= 3) return "ending";
+  return "activity";
+}
+function hasCoordinate2(poi) {
+  return typeof poi.lat === "number" && typeof poi.lng === "number";
+}
+function scoreRouteOrder2(steps, preferredFirstTypes = []) {
+  const pathDistance = steps.slice(1).reduce((sum, step, index) => {
+    return sum + distanceKm2(steps[index].poi, step.poi);
+  }, 0);
+  const startEndDistance = distanceKm2(steps[0].poi, steps.at(-1).poi);
+  const rolePenalty = scoreRoleOrderPenalty2(steps, preferredFirstTypes);
+  const backtrackPenalty = scoreBacktrackPenalty2(steps);
+  return pathDistance - startEndDistance * 0.45 + rolePenalty + backtrackPenalty;
+}
+function scoreRoleOrderPenalty2(steps, preferredFirstTypes = []) {
+  let penalty = 0;
+  const first = steps[0]?.poi;
+  const last = steps.at(-1)?.poi;
+  if (preferredFirstTypes.length > 0 && first && !preferredFirstTypes.includes(first.type)) penalty += 100;
+  if (first?.type === "\u9910\u996E\u6B63\u9910" || first?.type === "\u8F7B\u98DF\u751C\u996E") penalty += 2.5;
+  if (last?.type === "\u9910\u996E\u6B63\u9910") penalty += 1.2;
+  const mealIndex = steps.findIndex((step) => step.poi.type === "\u9910\u996E\u6B63\u9910");
+  const breakIndex = steps.findIndex((step) => step.poi.type === "\u8F7B\u98DF\u751C\u996E");
+  if (mealIndex >= 0 && breakIndex >= 0 && mealIndex < breakIndex) penalty += 0.8;
+  return penalty;
+}
+function scoreBacktrackPenalty2(steps) {
+  let penalty = 0;
+  for (let i = 2; i < steps.length; i += 1) {
+    const prevPrev = steps[i - 2].poi;
+    const current = steps[i].poi;
+    const skippedDistance = distanceKm2(prevPrev, current);
+    const viaDistance = distanceKm2(prevPrev, steps[i - 1].poi) + distanceKm2(steps[i - 1].poi, current);
+    if (skippedDistance > 0 && viaDistance / skippedDistance > 2.2) {
+      penalty += 1.5;
+    }
+  }
+  return penalty;
+}
+function distanceKm2(a, b) {
+  if (!hasCoordinate2(a) || !hasCoordinate2(b)) return 0;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians2(b.lat - a.lat);
+  const dLng = toRadians2(b.lng - a.lng);
+  const lat1 = toRadians2(a.lat);
+  const lat2 = toRadians2(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function toRadians2(value) {
+  return value * Math.PI / 180;
+}
+function permute2(items) {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, index) => {
+    const rest = [...items.slice(0, index), ...items.slice(index + 1)];
+    return permute2(rest).map((candidate) => [item, ...candidate]);
+  });
 }
 function summarizeStep(step) {
   return {
@@ -891,7 +1281,9 @@ var pois_default = [
       "poi_002",
       "poi_003"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.56685,
+    lng: 114.121515
   },
   {
     id: "poi_002",
@@ -946,7 +1338,9 @@ var pois_default = [
       "poi_001",
       "poi_004"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.64213,
+    lng: 113.864959
   },
   {
     id: "poi_003",
@@ -1001,7 +1395,9 @@ var pois_default = [
       "poi_001",
       "poi_004"
     ],
-    priorityScore: 85
+    priorityScore: 85,
+    lat: 22.535788,
+    lng: 113.927276
   },
   {
     id: "poi_004",
@@ -1056,7 +1452,9 @@ var pois_default = [
       "poi_003",
       "poi_008"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.546572,
+    lng: 114.076423
   },
   {
     id: "poi_005",
@@ -1110,7 +1508,9 @@ var pois_default = [
       "poi_006",
       "poi_008"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.587464,
+    lng: 114.146443
   },
   {
     id: "poi_006",
@@ -1162,7 +1562,9 @@ var pois_default = [
       "poi_001",
       "poi_005"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.568402,
+    lng: 114.148005
   },
   {
     id: "poi_007",
@@ -1216,7 +1618,9 @@ var pois_default = [
       "poi_002",
       "poi_003"
     ],
-    priorityScore: 86
+    priorityScore: 86,
+    lat: 22.555364,
+    lng: 113.895644
   },
   {
     id: "poi_008",
@@ -1269,7 +1673,9 @@ var pois_default = [
       "poi_003",
       "poi_004"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.546577,
+    lng: 114.122394
   },
   {
     id: "poi_009",
@@ -1321,7 +1727,9 @@ var pois_default = [
       "poi_010",
       "poi_011"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.579626,
+    lng: 114.116705
   },
   {
     id: "poi_010",
@@ -1374,7 +1782,9 @@ var pois_default = [
       "poi_009",
       "poi_012"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.545278,
+    lng: 114.114461
   },
   {
     id: "poi_011",
@@ -1426,7 +1836,9 @@ var pois_default = [
       "poi_010",
       "poi_013"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.543047,
+    lng: 113.887618
   },
   {
     id: "poi_012",
@@ -1477,7 +1889,9 @@ var pois_default = [
       "poi_009",
       "poi_014"
     ],
-    priorityScore: 76
+    priorityScore: 76,
+    lat: 22.547283,
+    lng: 114.096067
   },
   {
     id: "poi_013",
@@ -1529,7 +1943,9 @@ var pois_default = [
       "poi_011",
       "poi_015"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.765293,
+    lng: 113.82265
   },
   {
     id: "poi_014",
@@ -1580,7 +1996,9 @@ var pois_default = [
       "poi_012",
       "poi_016"
     ],
-    priorityScore: 75
+    priorityScore: 75,
+    lat: 22.5329,
+    lng: 113.9355
   },
   {
     id: "poi_015",
@@ -1631,7 +2049,9 @@ var pois_default = [
       "poi_014",
       "poi_017"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.534288,
+    lng: 114.062599
   },
   {
     id: "poi_016",
@@ -1686,7 +2106,9 @@ var pois_default = [
       "poi_015",
       "poi_018"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.535899,
+    lng: 114.065432
   },
   {
     id: "poi_017",
@@ -1739,7 +2161,9 @@ var pois_default = [
       "poi_011",
       "poi_013"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.549623,
+    lng: 113.88537
   },
   {
     id: "poi_018",
@@ -1791,7 +2215,9 @@ var pois_default = [
       "poi_013",
       "poi_016"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.545956,
+    lng: 114.061023
   },
   {
     id: "poi_029",
@@ -1843,7 +2269,9 @@ var pois_default = [
       "poi_030",
       "poi_031"
     ],
-    priorityScore: 88
+    priorityScore: 88,
+    lat: 22.538869,
+    lng: 113.97873
   },
   {
     id: "poi_030",
@@ -1895,7 +2323,9 @@ var pois_default = [
       "poi_029",
       "poi_032"
     ],
-    priorityScore: 87
+    priorityScore: 87,
+    lat: 22.534481,
+    lng: 113.973715
   },
   {
     id: "poi_031",
@@ -1949,7 +2379,9 @@ var pois_default = [
       "poi_032",
       "poi_033"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.524634,
+    lng: 113.990272
   },
   {
     id: "poi_032",
@@ -2001,7 +2433,9 @@ var pois_default = [
       "poi_031",
       "poi_034"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.545627,
+    lng: 114.117705
   },
   {
     id: "poi_033",
@@ -2053,7 +2487,9 @@ var pois_default = [
       "poi_034",
       "poi_035"
     ],
-    priorityScore: 86
+    priorityScore: 86,
+    lat: 22.577705,
+    lng: 114.177004
   },
   {
     id: "poi_034",
@@ -2104,7 +2540,9 @@ var pois_default = [
       "poi_033",
       "poi_036"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.735034,
+    lng: 113.789673
   },
   {
     id: "poi_035",
@@ -2156,7 +2594,9 @@ var pois_default = [
       "poi_031",
       "poi_037"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.532087,
+    lng: 114.054149
   },
   {
     id: "poi_036",
@@ -2208,7 +2648,9 @@ var pois_default = [
       "poi_035",
       "poi_038"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.552264,
+    lng: 113.88764
   },
   {
     id: "poi_037",
@@ -2261,7 +2703,9 @@ var pois_default = [
       "poi_033",
       "poi_039"
     ],
-    priorityScore: 87
+    priorityScore: 87,
+    lat: 22.513668,
+    lng: 113.912974
   },
   {
     id: "poi_038",
@@ -2314,7 +2758,9 @@ var pois_default = [
       "poi_036",
       "poi_035"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.568767,
+    lng: 113.904033
   },
   {
     id: "poi_039",
@@ -2361,7 +2807,9 @@ var pois_default = [
       "poi_040",
       "poi_041"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.533235,
+    lng: 114.026495
   },
   {
     id: "poi_040",
@@ -2409,7 +2857,9 @@ var pois_default = [
       "poi_039",
       "poi_042"
     ],
-    priorityScore: 85
+    priorityScore: 85,
+    lat: 22.5458,
+    lng: 114.0665
   },
   {
     id: "poi_041",
@@ -2455,7 +2905,9 @@ var pois_default = [
       "poi_040",
       "poi_043"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.501608,
+    lng: 113.921414
   },
   {
     id: "poi_042",
@@ -2502,7 +2954,9 @@ var pois_default = [
       "poi_041",
       "poi_044"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.536805,
+    lng: 114.065277
   },
   {
     id: "poi_043",
@@ -2550,7 +3004,9 @@ var pois_default = [
       "poi_044",
       "poi_045"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.5329,
+    lng: 113.9355
   },
   {
     id: "poi_044",
@@ -2597,7 +3053,9 @@ var pois_default = [
       "poi_043",
       "poi_046"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.55053,
+    lng: 114.110175
   },
   {
     id: "poi_045",
@@ -2645,7 +3103,9 @@ var pois_default = [
       "poi_044",
       "poi_047"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.533191,
+    lng: 113.930478
   },
   {
     id: "poi_046",
@@ -2691,7 +3151,9 @@ var pois_default = [
       "poi_045",
       "poi_048"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.533191,
+    lng: 113.930478
   },
   {
     id: "poi_047",
@@ -2739,7 +3201,9 @@ var pois_default = [
       "poi_048",
       "poi_049"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.625823,
+    lng: 113.8451
   },
   {
     id: "poi_048",
@@ -2786,7 +3250,9 @@ var pois_default = [
       "poi_047",
       "poi_050"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.566019,
+    lng: 114.143488
   },
   {
     id: "poi_049",
@@ -2835,7 +3301,9 @@ var pois_default = [
       "poi_048",
       "poi_051"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.536178,
+    lng: 113.91709
   },
   {
     id: "poi_050",
@@ -2882,7 +3350,9 @@ var pois_default = [
       "poi_046",
       "poi_049"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.54672,
+    lng: 114.059928
   },
   {
     id: "poi_068",
@@ -2929,7 +3399,9 @@ var pois_default = [
       "poi_069",
       "poi_070"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.535739,
+    lng: 114.066352
   },
   {
     id: "poi_069",
@@ -2978,7 +3450,9 @@ var pois_default = [
       "poi_068",
       "poi_071"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.525153,
+    lng: 113.991773
   },
   {
     id: "poi_070",
@@ -3026,7 +3500,9 @@ var pois_default = [
       "poi_069",
       "poi_072"
     ],
-    priorityScore: 76
+    priorityScore: 76,
+    lat: 22.538039,
+    lng: 114.064544
   },
   {
     id: "poi_051",
@@ -3075,7 +3551,9 @@ var pois_default = [
       "poi_052",
       "poi_053"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.61503,
+    lng: 113.861218
   },
   {
     id: "poi_052",
@@ -3125,7 +3603,9 @@ var pois_default = [
       "poi_051",
       "poi_054"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.667588,
+    lng: 113.820921
   },
   {
     id: "poi_053",
@@ -3176,7 +3656,9 @@ var pois_default = [
       "poi_052",
       "poi_055"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.568929,
+    lng: 113.903422
   },
   {
     id: "poi_054",
@@ -3229,7 +3711,9 @@ var pois_default = [
       "poi_055",
       "poi_056"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.548754,
+    lng: 113.887879
   },
   {
     id: "poi_055",
@@ -3280,7 +3764,9 @@ var pois_default = [
       "poi_054",
       "poi_057"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.76774,
+    lng: 113.846187
   },
   {
     id: "poi_056",
@@ -3332,7 +3818,9 @@ var pois_default = [
       "poi_055",
       "poi_058"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.5357,
+    lng: 114.0664
   },
   {
     id: "poi_057",
@@ -3383,7 +3871,9 @@ var pois_default = [
       "poi_056",
       "poi_059"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.758723,
+    lng: 113.812213
   },
   {
     id: "poi_058",
@@ -3435,7 +3925,9 @@ var pois_default = [
       "poi_057",
       "poi_060"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.783159,
+    lng: 113.835768
   },
   {
     id: "poi_059",
@@ -3488,7 +3980,9 @@ var pois_default = [
       "poi_058",
       "poi_061"
     ],
-    priorityScore: 85
+    priorityScore: 85,
+    lat: 22.543089,
+    lng: 113.886696
   },
   {
     id: "poi_060",
@@ -3539,7 +4033,9 @@ var pois_default = [
       "poi_059",
       "poi_062"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.543089,
+    lng: 113.886696
   },
   {
     id: "poi_061",
@@ -3589,7 +4085,9 @@ var pois_default = [
       "poi_060",
       "poi_063"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.543089,
+    lng: 113.886696
   },
   {
     id: "poi_062",
@@ -3639,7 +4137,9 @@ var pois_default = [
       "poi_061",
       "poi_064"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.559863,
+    lng: 113.906304
   },
   {
     id: "poi_063",
@@ -3691,7 +4191,9 @@ var pois_default = [
       "poi_064",
       "poi_065"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.522696,
+    lng: 113.992044
   },
   {
     id: "poi_064",
@@ -3743,7 +4245,9 @@ var pois_default = [
       "poi_063",
       "poi_066"
     ],
-    priorityScore: 86
+    priorityScore: 86,
+    lat: 22.523474,
+    lng: 113.991235
   },
   {
     id: "poi_065",
@@ -3794,7 +4298,9 @@ var pois_default = [
       "poi_064",
       "poi_067"
     ],
-    priorityScore: 81
+    priorityScore: 81,
+    lat: 22.525231,
+    lng: 113.98993
   },
   {
     id: "poi_066",
@@ -3846,7 +4352,9 @@ var pois_default = [
       "poi_065",
       "poi_068"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.52518,
+    lng: 113.992305
   },
   {
     id: "poi_067",
@@ -3897,7 +4405,9 @@ var pois_default = [
       "poi_066",
       "poi_063"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.522561,
+    lng: 113.992465
   },
   {
     id: "poi_071",
@@ -3945,7 +4455,9 @@ var pois_default = [
       "poi_070",
       "poi_073"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.547863,
+    lng: 114.133505
   },
   {
     id: "poi_072",
@@ -3993,7 +4505,9 @@ var pois_default = [
       "poi_073",
       "poi_074"
     ],
-    priorityScore: 78
+    priorityScore: 78,
+    lat: 22.519596,
+    lng: 114.043441
   },
   {
     id: "poi_073",
@@ -4041,7 +4555,9 @@ var pois_default = [
       "poi_072",
       "poi_075"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.585512,
+    lng: 113.968861
   },
   {
     id: "poi_074",
@@ -4089,7 +4605,9 @@ var pois_default = [
       "poi_075",
       "poi_076"
     ],
-    priorityScore: 76
+    priorityScore: 76,
+    lat: 22.577485,
+    lng: 114.134606
   },
   {
     id: "poi_075",
@@ -4137,7 +4655,9 @@ var pois_default = [
       "poi_074",
       "poi_073"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.6355,
+    lng: 114.2104
   },
   {
     id: "poi_076",
@@ -4187,7 +4707,9 @@ var pois_default = [
       "poi_077",
       "poi_078"
     ],
-    priorityScore: 77
+    priorityScore: 77,
+    lat: 22.533935,
+    lng: 114.053693
   },
   {
     id: "poi_077",
@@ -4238,7 +4760,9 @@ var pois_default = [
       "poi_076",
       "poi_079"
     ],
-    priorityScore: 82
+    priorityScore: 82,
+    lat: 22.556013,
+    lng: 114.070265
   },
   {
     id: "poi_078",
@@ -4290,7 +4814,9 @@ var pois_default = [
       "poi_079",
       "poi_080"
     ],
-    priorityScore: 79
+    priorityScore: 79,
+    lat: 22.535957,
+    lng: 114.066437
   },
   {
     id: "poi_079",
@@ -4341,7 +4867,9 @@ var pois_default = [
       "poi_078",
       "poi_081"
     ],
-    priorityScore: 84
+    priorityScore: 84,
+    lat: 22.535362,
+    lng: 114.066327
   },
   {
     id: "poi_080",
@@ -4392,7 +4920,9 @@ var pois_default = [
       "poi_079",
       "poi_082"
     ],
-    priorityScore: 80
+    priorityScore: 80,
+    lat: 22.536084,
+    lng: 114.066262
   },
   {
     id: "poi_081",
@@ -4445,7 +4975,9 @@ var pois_default = [
       "poi_080",
       "poi_079"
     ],
-    priorityScore: 83
+    priorityScore: 83,
+    lat: 22.535957,
+    lng: 114.066437
   }
 ];
 
@@ -4462,6 +4994,8 @@ function normalizePoi(raw) {
   return {
     id,
     name: asString(raw.name, id),
+    lat: optionalNumber(raw.lat),
+    lng: optionalNumber(raw.lng),
     type,
     subType: asString(raw.subType, type),
     address: optionalString(raw.address),
