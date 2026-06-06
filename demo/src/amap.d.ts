@@ -11,13 +11,13 @@ declare namespace AMap {
   class Map {
     constructor(container: HTMLElement, opts: { zoom?: number; center?: [number, number]; resizeEnable?: boolean });
     add(overlay: unknown): void;
-    setFitView(): void;
+    setFitView(overlays?: unknown, immediately?: boolean, avoid?: [number, number, number, number]): void;
     destroy(): void;
   }
 
   class Polyline {
     constructor(opts: {
-      path: { lng: number; lat: number }[];
+      path: [number, number][];
       strokeColor?: string;
       strokeWeight?: number;
       strokeStyle?: string;
