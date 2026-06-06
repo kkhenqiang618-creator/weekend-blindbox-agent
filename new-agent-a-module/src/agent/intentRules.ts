@@ -29,6 +29,7 @@ export function parseIntentWithRules(userInput: UserInput): Requirements {
     constraints,
     timeText: extractTimeText(rawText),
     rawText,
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme),
     intentSource: "rules"
   };
 }
@@ -43,7 +44,8 @@ export function applyQuickSelections(requirements: Requirements, userInput: User
     distanceLevel: quick.distanceLevel ?? requirements.distanceLevel,
     peopleType: quick.peopleType ?? requirements.peopleType,
     preferences: unique([...(requirements.preferences ?? []), ...(quick.preferences ?? [])]),
-    constraints: unique([...(requirements.constraints ?? []), ...(quick.constraints ?? [])])
+    constraints: unique([...(requirements.constraints ?? []), ...(quick.constraints ?? [])]),
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme) ?? requirements.blindBoxTheme
   };
 }
 
@@ -59,6 +61,7 @@ export function normalizeRequirements(input: Partial<Requirements>, userInput: U
     constraints: normalizeStringArray(input.constraints, ruleFallback.constraints),
     timeText: typeof input.timeText === "string" && input.timeText ? input.timeText : ruleFallback.timeText,
     rawText: userInput.rawText || "",
+    blindBoxTheme: normalizeTheme(input.blindBoxTheme) ?? ruleFallback.blindBoxTheme,
     intentSource: input.intentSource ?? "llm"
   };
 
@@ -166,4 +169,11 @@ function normalizeStringArray(value: unknown, fallback: string[]): string[] {
 
 function isPeopleType(value: unknown): value is PeopleType {
   return value === "单人" || value === "情侣" || value === "朋友" || value === "亲子";
+}
+
+function normalizeTheme(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const theme = value.trim();
+  if (!theme || theme === "惊喜盲盒") return undefined;
+  return theme;
 }

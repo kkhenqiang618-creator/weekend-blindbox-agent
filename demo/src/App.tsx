@@ -88,12 +88,12 @@ export default function App() {
     }
   }, [history]);
 
-  const handleGenerate = useCallback(async (rawText: string) => {
+  const handleGenerate = useCallback(async (rawText: string, quickSelections: Record<string, unknown> = {}) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const result = await API.generatePlan(rawText);
+      const result = await API.generatePlan(rawText, quickSelections);
       setPlan(result);
       setStep('unboxing');
     } catch (err) {
@@ -304,21 +304,22 @@ export default function App() {
               llmConfig={llmConfig}
               onConfirm={handleExecute}
               onReplaceRoute={async () => {
-                const target = plan.route.steps.find((routeStep) => routeStep.role === 'activity') ?? plan.route.steps[0];
-                if (!target) return;
                 await handleTriggerPlanB({
-                  type: 'unavailable',
-                  poiId: target.poi.id,
-                  message: '用户不满意当前路线，希望先替换核心节点并重新规划',
+                  type: 'reroll',
+                  message: '用户不满意当前路线，希望换一条新的完整路线',
+                  customPreference: '换一条不同路线，保留原始硬约束，避开当前路线的核心 POI，并让路线顺序尽量连贯',
                 }, 'review');
               }}
               onReplaceStep={async (routeStep, candidate, llmConfig, customPrompt) => {
                 const trimmedPrompt = customPrompt?.trim() ?? '';
+                const liveCandidatePrompt = candidate?.id?.startsWith('live-')
+                  ? `${candidate.name}：${candidate.reason}`
+                  : '';
                 await handleTriggerPlanB({
                   type: 'unavailable',
                   poiId: routeStep.poi.id,
-                  customPreference: trimmedPrompt || undefined,
-                  preferredReplacement: candidate
+                  customPreference: trimmedPrompt || liveCandidatePrompt || undefined,
+                  preferredReplacement: candidate && !candidate.id?.startsWith('live-')
                     ? {
                         id: candidate.id,
                         name: candidate.name,
@@ -335,7 +336,7 @@ export default function App() {
                     candidate
                       ? `用户希望将「${routeStep.poi.name}」替换为「${candidate.name}」`
                       : `用户希望更换「${routeStep.poi.name}」这个节点`,
-                    trimmedPrompt ? `用户补充偏好：${trimmedPrompt}` : '',
+                    trimmedPrompt || liveCandidatePrompt ? `用户补充偏好：${trimmedPrompt || liveCandidatePrompt}` : '',
                   ].filter(Boolean).join('；'),
                 }, 'review', llmConfig);
               }}

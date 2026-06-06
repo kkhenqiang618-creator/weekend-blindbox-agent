@@ -14,6 +14,7 @@ export interface UserInput {
     city?: string;
     durationHours?: number;
     distanceLevel?: string;
+    blindBoxTheme?: string;
   };
 }
 
@@ -27,6 +28,7 @@ export interface Requirements {
   constraints: string[];
   timeText: string;
   rawText: string;
+  blindBoxTheme?: string;
   intentSource?: "llm" | "rules";
   intentFallbackReason?: string;
 }
@@ -104,7 +106,7 @@ export interface Plan {
 }
 
 export interface ReplanEvent {
-  type: "queue" | "rain" | "timeout" | "unavailable" | "closed";
+  type: "queue" | "rain" | "timeout" | "unavailable" | "closed" | "reroll";
   poiId?: string;
   waitMinutes?: number;
   delayMinutes?: number;

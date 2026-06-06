@@ -41,6 +41,7 @@ const THEME_RULES: ThemeRule[] = [
 ];
 
 export function selectBlindBoxTheme(requirements: Requirements): string {
+  if (requirements.blindBoxTheme) return requirements.blindBoxTheme;
   return THEME_RULES.find((rule) => rule.match(requirements))?.theme ?? "周末轻松探索盒";
 }
 

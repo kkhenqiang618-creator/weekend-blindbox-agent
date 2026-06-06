@@ -101,6 +101,7 @@ export interface Requirements {
   constraints: string[];
   timeText: string;
   rawText?: string;
+  blindBoxTheme?: string;
   parseMethod: string;
   fallbackReason?: string;
 }

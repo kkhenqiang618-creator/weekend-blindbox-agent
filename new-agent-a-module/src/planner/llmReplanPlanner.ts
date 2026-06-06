@@ -242,25 +242,39 @@ async function searchLivePoiCandidates(
       }>;
     };
 
-    if (data.status !== "1" || !Array.isArray(data.pois)) {
-      return buildFallbackLiveCandidates(event, targetStep, requirements);
-    }
+    if (data.status !== "1" || !Array.isArray(data.pois)) return [];
 
     const candidates = data.pois
+      .filter((item) => isUsableAmapPoi(item))
       .map((item, index) => poiFromAmap(item, index, event, targetStep, requirements))
       .filter((poi): poi is Poi => Boolean(poi));
 
-    return candidates.length > 0 ? candidates : buildFallbackLiveCandidates(event, targetStep, requirements);
+    return candidates;
   } catch {
-    return buildFallbackLiveCandidates(event, targetStep, requirements);
+    return [];
   }
 }
 
 function buildLiveSearchKeyword(event: ReplanEvent, targetStep: RouteStep, requirements: Requirements): string {
   const prompt = event.customPreference?.trim();
-  if (prompt) return prompt;
+  const area = targetStep.poi.area || targetStep.poi.businessDistrict || requirements.city;
+  if (prompt && /拍照|打卡|出片/.test(prompt)) return `${area} 拍照打卡 艺术空间 咖啡 商场`;
+  if (prompt && /室内|下雨|雨天/.test(prompt)) return `${area} 室内 娱乐 商场 展览 咖啡`;
+  if (prompt && /diy|DIY|手工|手作|陶艺|银饰|烘焙|画画/.test(prompt)) return `${area} DIY手工 陶艺 烘焙`;
+  if (prompt) return `${area} ${prompt}`;
   const corePreference = requirements.preferences[0] || targetStep.poi.type;
-  return `${requirements.city}${corePreference}${targetStep.poi.type}`;
+  return `${area}${corePreference}${targetStep.poi.type}`;
+}
+
+function isUsableAmapPoi(item: {
+  name?: string;
+  type?: string;
+}): boolean {
+  const text = `${item.name || ""} ${item.type || ""}`;
+  if (!item.name) return false;
+  if (/政府|委员会|办事处|派出所|停车场|收费站|公交站|地铁站|道路|路口|出入口|住宅|小区|写字楼|公司|银行|医院|学校|照相|摄影|婚纱|写真|证件照|儿童摄影|汉服体验|旅拍/.test(text)) return false;
+  if (/地名地址信息|道路附属设施|交通设施服务|政府机构|公司企业|商务住宅|生活服务;摄影冲印店/.test(text)) return false;
+  return /餐饮|购物|商场|娱乐|体育休闲|影剧院|风景名胜|科教文化|咖啡|茶艺|甜品|美术馆|博物馆|书店|公园|生活服务/.test(text);
 }
 
 function poiFromAmap(
@@ -399,39 +413,6 @@ function scoreCandidateLocality(poi: Poi, routeCluster?: string, routeArea?: str
 
 function inferRouteClusterFromPoi(poi: Poi): string | undefined {
   return poi.routeCluster || poi.businessDistrict || poi.area;
-}
-
-function buildFallbackLiveCandidates(event: ReplanEvent, targetStep: RouteStep, requirements: Requirements): Poi[] {
-  const baseNames = [
-    `${requirements.city}${event.customPreference || requirements.preferences[0] || "周末"}灵感点`,
-    `${targetStep.poi.businessDistrict || requirements.city}附近新发现`,
-    `${requirements.city}不排队轻体验`,
-  ];
-
-  return baseNames.map((name, index) => ({
-    id: `live_fallback_${Date.now()}_${index}`,
-    name,
-    type: inferPoiType(event, targetStep),
-    subType: targetStep.poi.subType || "实时候选",
-    area: targetStep.poi.area || requirements.city,
-    businessDistrict: targetStep.poi.businessDistrict || requirements.city,
-    routeCluster: targetStep.poi.routeCluster,
-    price: Math.min(Math.max(30, targetStep.poi.price || 60), requirements.budgetMax),
-    meituanRating: 4.5 + index * 0.1,
-    reviewCount: 600 + index * 180,
-    tags: inferLiveTags(event, targetStep, requirements),
-    limits: ["实时候选", "低排队"],
-    fitPeople: [requirements.peopleType],
-    stayMinutes: targetStep.poi.stayMinutes,
-    queueLevel: "low",
-    distanceLevel: targetStep.poi.distanceLevel || "3-10km",
-    reason: `Agent 根据你的补充要求生成的实时备选点，用于在本地 POI 不足时继续完成路线微调。`,
-    blindBoxThemes: targetStep.poi.blindBoxThemes,
-    availableTools: ["liveCandidateSearch", "queueCheck", "availabilityCheck"],
-    bookingRequired: false,
-    weatherSensitive: false,
-    priorityScore: 82 - index,
-  }));
 }
 
 function inferPoiType(event: ReplanEvent, targetStep: RouteStep): string {

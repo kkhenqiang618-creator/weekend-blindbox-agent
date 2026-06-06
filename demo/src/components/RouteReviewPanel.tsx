@@ -29,35 +29,38 @@ interface ReplacementCandidate {
   tags: string[];
 }
 
-const MOCK_CANDIDATES_BY_ROLE: Record<string, ReplacementCandidate[]> = {
-  activity: [
-    { id: 'mock-activity-1', name: '华侨城创意文化园', type: '文化体验', area: '南山华侨城', price: 0, stayMinutes: 90, reason: '同样适合拍照和轻松闲逛，室内外空间都有，替换后不会打乱咖啡和正餐节奏。', tags: ['拍照', '小众', '轻松'] },
-    { id: 'mock-activity-2', name: '深业上城空中小镇', type: '休闲娱乐', area: '福田莲花', price: 0, stayMinutes: 80, reason: '动线集中，适合朋友边逛边拍照，距离餐饮点更容易衔接。', tags: ['城市漫步', '拍照', '少走路'] },
-    { id: 'mock-activity-3', name: '深圳湾万象城艺文街区', type: '拍照地标', area: '南山后海', price: 0, stayMinutes: 75, reason: '商业配套完整，天气变化时也更稳，适合做路线中的核心节点。', tags: ['雨天友好', '拍照', '好衔接'] },
-    { id: 'mock-activity-4', name: '海上世界文化艺术中心', type: '文化体验', area: '蛇口', price: 40, stayMinutes: 100, reason: '更有展览和海边氛围，适合把原本的普通打卡点升级成更有记忆点的一站。', tags: ['展览', '海边', '氛围感'] },
-  ],
-  break: [
-    { id: 'mock-break-1', name: 'Gee Coffee Roasters', type: '轻食甜饮', area: '南山科技园', price: 45, stayMinutes: 60, reason: '咖啡稳定、停留时间可控，适合作为中途休息，不会拖慢后续路线。', tags: ['咖啡', '休息', '少排队'] },
-    { id: 'mock-break-2', name: '野萃山茶咖', type: '轻食甜饮', area: '福田中心', price: 38, stayMinutes: 50, reason: '价格更轻，适合替换高峰期排队的甜饮点，并保留轻松聊天氛围。', tags: ['茶咖', '预算友好', '轻松'] },
-    { id: 'mock-break-3', name: 'M Stand 社区店', type: '轻食甜饮', area: '南山后海', price: 52, stayMinutes: 55, reason: '出品和空间更稳定，适合朋友出行时作为明确集合/休息节点。', tags: ['咖啡', '空间稳定', '好集合'] },
-    { id: 'mock-break-4', name: 'Baker & Spice', type: '轻食甜饮', area: '福田COCO Park', price: 58, stayMinutes: 65, reason: '轻食和甜点选择多，能同时满足休息和补能，替换后路线体验更完整。', tags: ['甜点', '轻食', '补能'] },
-  ],
-  meal: [
-    { id: 'mock-meal-1', name: '大良陈记老铺·顺德双皮奶', type: '餐饮正餐', area: '福田中心', price: 75, stayMinutes: 80, reason: '排队风险相对可控，口味接受度高，适合朋友路线中的正餐替代。', tags: ['美食', '顺德', '稳妥'] },
-    { id: 'mock-meal-2', name: '啫火啫啫煲', type: '餐饮正餐', area: '南山后海', price: 88, stayMinutes: 90, reason: '烟火气更强，适合把普通餐饮换成更有周末感的一站。', tags: ['热闹', '正餐', '氛围'] },
-    { id: 'mock-meal-3', name: '陶陶居', type: '餐饮正餐', area: '罗湖万象城', price: 95, stayMinutes: 90, reason: '菜品覆盖面广，适合多人同行，替换后更不容易踩偏口味。', tags: ['粤菜', '多人友好', '经典'] },
-    { id: 'mock-meal-4', name: '蘩楼', type: '餐饮正餐', area: '福田皇庭', price: 90, stayMinutes: 85, reason: '位置更好衔接商圈路线，适合作为后半程餐饮节点。', tags: ['粤菜', '商圈', '好衔接'] },
-  ],
-  ending: [
-    { id: 'mock-ending-1', name: '深圳人才公园夜景段', type: '户外散步', area: '南山后海', price: 0, stayMinutes: 60, reason: '适合作为收尾散步点，成本低、氛围轻松，能让路线自然结束。', tags: ['夜景', '散步', '免费'] },
-    { id: 'mock-ending-2', name: '海上世界明华轮广场', type: '拍照地标', area: '蛇口', price: 0, stayMinutes: 70, reason: '夜间辨识度更强，适合最后拍照打卡，替换后结果感更好。', tags: ['夜景', '拍照', '地标'] },
-    { id: 'mock-ending-3', name: '卓悦中心街区', type: '休闲娱乐', area: '福田中心', price: 0, stayMinutes: 60, reason: '交通和商业配套更稳，适合作为不确定天气下的收尾选择。', tags: ['商圈', '雨天友好', '交通方便'] },
-    { id: 'mock-ending-4', name: '欢乐港湾摩天轮广场', type: '拍照地标', area: '宝安中心', price: 0, stayMinutes: 80, reason: '更有仪式感和盲盒惊喜感，适合把路线结尾做得更难忘。', tags: ['仪式感', '拍照', '海边'] },
-  ],
-};
-
 function getReplacementCandidates(step: RouteStep): ReplacementCandidate[] {
-  return MOCK_CANDIDATES_BY_ROLE[step.role] ?? MOCK_CANDIDATES_BY_ROLE.activity;
+  const area = step.poi.area || step.poi.businessDistrict || '当前区域';
+  const basePrice = Math.max(0, Math.min(step.poi.price || 60, 120));
+  const minutes = step.poi.stayMinutes || 70;
+  const shared = {
+    area,
+    price: basePrice,
+    stayMinutes: minutes,
+  };
+
+  if (step.role === 'break') {
+    return [
+      { ...shared, id: 'live-break-1', name: `${area}附近咖啡甜饮`, type: '轻食甜饮', reason: `让 Agent 在${area}实时检索咖啡、茶饮或甜品店，优先保留休息节奏和少走路。`, tags: ['实时搜索', '咖啡', '同区'] },
+      { ...shared, id: 'live-break-2', name: `${area}附近安静休息点`, type: '轻食甜饮', reason: `优先搜索适合坐下休息、聊天或等位风险较低的轻补给点。`, tags: ['安静', '少排队', '同区'] },
+      { ...shared, id: 'live-break-3', name: `${area}附近拍照甜品店`, type: '轻食甜饮', reason: `如果这条路线强调出片，会优先寻找空间好看、适合拍照的甜品/咖啡店。`, tags: ['拍照', '甜品', '实时搜索'] },
+    ];
+  }
+
+  if (step.role === 'meal') {
+    return [
+      { ...shared, id: 'live-meal-1', name: `${area}附近低排队正餐`, type: '餐饮正餐', reason: `让 Agent 在${area}实时搜索更适合当前路线的正餐，优先控制排队和预算。`, tags: ['美食', '少排队', '同区'] },
+      { ...shared, id: 'live-meal-2', name: `${area}附近轻松聚餐`, type: '餐饮正餐', reason: `适合朋友或情侣继续聊天，不把路线突然拉到其他区。`, tags: ['聚餐', '好衔接', '实时搜索'] },
+      { ...shared, id: 'live-meal-3', name: `${area}附近特色小吃`, type: '餐饮正餐', reason: `更偏周末探索感，优先找有记忆点但不会过度绕路的餐饮节点。`, tags: ['小吃', '特色', '同区'] },
+    ];
+  }
+
+  return [
+    { ...shared, id: 'live-activity-1', name: `${area}附近拍照打卡点`, type: '拍照地标', reason: `让 Agent 在${area}实时搜索真正适合逛、拍照、停留的地点，过滤照相馆和摄影服务。`, tags: ['拍照', '打卡', '同区'] },
+    { ...shared, id: 'live-activity-2', name: `${area}附近室内体验`, type: '休闲娱乐', reason: `优先找商场、展览、手作、影院等可执行的室内玩乐点，适合天气不稳定时替换。`, tags: ['室内', '体验', '实时搜索'] },
+    { ...shared, id: 'live-activity-3', name: `${area}附近小众文化点`, type: '文化体验', reason: `更适合把普通节点换成书店、艺术空间、展览或手作体验。`, tags: ['小众', '文化', '同区'] },
+    { ...shared, id: 'live-activity-4', name: `${area}附近散步收尾点`, type: '户外散步', reason: `适合把路线收束在同一区域，避免为了替换一站突然跨区。`, tags: ['散步', '少绕路', '同区'] },
+  ];
 }
 
 function StepGuide() {
@@ -419,6 +422,7 @@ export default function RouteReviewPanel({
   const replacementCandidates = pendingConfirmStep ? getReplacementCandidates(pendingConfirmStep) : [];
   const latestChange = plan.planB?.changes?.[0];
   const noReplacementFound = Boolean(plan.planB && !latestChange);
+  const isRouteReroll = plan.planB?.event?.type === 'reroll';
 
   useEffect(() => {
     if (!displayRoute.steps.some((step) => step.poi.id === selectedStepId)) {
@@ -493,7 +497,7 @@ export default function RouteReviewPanel({
               </svg>
               不满意，换路线
             </span>
-            <span className="mt-2 block text-xs font-semibold leading-5 text-purple-500">替换核心节点并重新规划</span>
+            <span className="mt-2 block text-xs font-semibold leading-5 text-purple-500">LLM 重开完整盲盒路线</span>
           </button>
 
           <button
@@ -528,7 +532,7 @@ export default function RouteReviewPanel({
               <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-600">Route Plan B</p>
               <h3 className="mt-2 text-2xl font-extrabold text-purple-950">重新更换路线</h3>
               <p className="mt-2 max-w-2xl text-sm font-semibold leading-6 text-purple-800/70">
-                Demo 会先替换第一站核心节点，并让 Agent 重新计算后续路线。生成后会保留你的预算、人数和偏好。
+                Agent 会让大模型重新理解你的偏好，避开当前路线核心节点，再按距离连贯性生成一条新的周末盲盒路线。
               </p>
             </div>
             <button
@@ -605,21 +609,39 @@ export default function RouteReviewPanel({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-emerald-700">Updated</p>
-              <h3 className="mt-2 text-2xl font-extrabold text-emerald-900">已完成一次修改</h3>
+              <h3 className="mt-2 text-2xl font-extrabold text-emerald-900">
+                {isRouteReroll ? '已生成新的盲盒路线' : '已完成一次修改'}
+              </h3>
               <p className="mt-2 text-sm font-semibold leading-6 text-emerald-800/82">
-                {latestChange.from ? `已将「${latestChange.from}」` : '已调整路线'}
-                {latestChange.to ? `替换为「${latestChange.to}」` : ''}
+                {isRouteReroll
+                  ? (plan.planB?.message ?? 'Agent 已重新生成一条完整路线。')
+                  : `${latestChange.from ? `已将「${latestChange.from}」` : '已调整路线'}${latestChange.to ? `替换为「${latestChange.to}」` : ''}`}
                 。满意后可以继续确认进入预订辅助。
               </p>
+              {isRouteReroll && (
+                <ol className="mt-4 grid gap-2 sm:grid-cols-2">
+                  {displayRoute.steps.map((step) => (
+                    <li
+                      key={`${step.order}-${step.poi.id}`}
+                      className="flex items-center gap-2 rounded-2xl border border-emerald-100 bg-white/72 px-3 py-2 text-sm font-bold text-emerald-900"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs text-emerald-700">
+                        {step.order}
+                      </span>
+                      <span className="min-w-0 truncate">{step.poi.name}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
-                onClick={() => setMode('node')}
+                onClick={() => setMode(isRouteReroll ? 'route' : 'node')}
                 disabled={isLoading}
                 className="inline-flex items-center justify-center rounded-full border border-emerald-200 bg-white/76 px-5 py-3 text-sm font-bold text-emerald-800 transition-all duration-200 hover:-translate-y-0.5 hover:bg-emerald-50 disabled:opacity-40"
               >
-                再换一个节点
+                {isRouteReroll ? '继续换路线' : '再换一个节点'}
               </button>
               <button
                 type="button"

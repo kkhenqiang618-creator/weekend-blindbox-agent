@@ -58,6 +58,7 @@ var THEME_RULES = [
   }
 ];
 function selectBlindBoxTheme(requirements) {
+  if (requirements.blindBoxTheme) return requirements.blindBoxTheme;
   return THEME_RULES.find((rule) => rule.match(requirements))?.theme ?? "\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2";
 }
 function composeBlindBox(theme, route, requirements, toolResults) {
@@ -104,6 +105,7 @@ function parseIntentWithRules(userInput) {
     constraints,
     timeText: extractTimeText(rawText),
     rawText,
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme),
     intentSource: "rules"
   };
 }
@@ -117,7 +119,8 @@ function applyQuickSelections(requirements, userInput) {
     distanceLevel: quick.distanceLevel ?? requirements.distanceLevel,
     peopleType: quick.peopleType ?? requirements.peopleType,
     preferences: unique([...requirements.preferences ?? [], ...quick.preferences ?? []]),
-    constraints: unique([...requirements.constraints ?? [], ...quick.constraints ?? []])
+    constraints: unique([...requirements.constraints ?? [], ...quick.constraints ?? []]),
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme) ?? requirements.blindBoxTheme
   };
 }
 function normalizeRequirements(input, userInput) {
@@ -132,6 +135,7 @@ function normalizeRequirements(input, userInput) {
     constraints: normalizeStringArray(input.constraints, ruleFallback.constraints),
     timeText: typeof input.timeText === "string" && input.timeText ? input.timeText : ruleFallback.timeText,
     rawText: userInput.rawText || "",
+    blindBoxTheme: normalizeTheme(input.blindBoxTheme) ?? ruleFallback.blindBoxTheme,
     intentSource: input.intentSource ?? "llm"
   };
   return applyQuickSelections(normalized, userInput);
@@ -222,6 +226,12 @@ function normalizeStringArray(value, fallback) {
 function isPeopleType(value) {
   return value === "\u5355\u4EBA" || value === "\u60C5\u4FA3" || value === "\u670B\u53CB" || value === "\u4EB2\u5B50";
 }
+function normalizeTheme(value) {
+  if (typeof value !== "string") return void 0;
+  const theme = value.trim();
+  if (!theme || theme === "\u60CA\u559C\u76F2\u76D2") return void 0;
+  return theme;
+}
 
 // new-agent-a-module/src/agent/llmIntentParser.ts
 var DEFAULT_MODEL = "deepseek-chat";
@@ -248,6 +258,7 @@ async function parseIntentWithLLM(userInput) {
             "\u4F60\u662F\u672C\u5730\u751F\u6D3B\u5468\u672B\u51FA\u6E38 Agent \u7684\u610F\u56FE\u89E3\u6790\u5668\u3002",
             "\u8BF7\u628A\u7528\u6237\u7684\u4E00\u53E5\u8BDD\u76EE\u6807\u89E3\u6790\u4E3A\u4E25\u683C JSON\uFF0C\u4E0D\u8981\u8F93\u51FA\u89E3\u91CA\u3002",
             "\u5B57\u6BB5\u5FC5\u987B\u5305\u542B\uFF1Acity, durationHours, budgetMax, distanceLevel, peopleType, preferences, constraints, timeText\u3002",
+            "\u5982\u679C quickSelections.blindBoxTheme \u5B58\u5728\uFF0C\u8BF7\u4E0D\u8981\u6539\u5199\u5B83\uFF1B\u8FD9\u4E2A\u5B57\u6BB5\u4EE3\u8868\u7528\u6237\u660E\u786E\u9009\u62E9\u7684\u76F2\u76D2\u8DEF\u7EBF\u98CE\u683C\u3002",
             "peopleType \u53EA\u80FD\u662F\uFF1A\u5355\u4EBA\u3001\u60C5\u4FA3\u3001\u670B\u53CB\u3001\u4EB2\u5B50\u3002",
             "preferences \u548C constraints \u5FC5\u987B\u662F\u5B57\u7B26\u4E32\u6570\u7EC4\u3002",
             "\u8BF7\u4F18\u5148\u6839\u636E\u7528\u6237\u539F\u8BDD\u505A\u8BED\u4E49\u5224\u65AD\uFF0C\u4E0D\u8981\u673A\u68B0\u5957\u7528\u9ED8\u8BA4\u503C\u3002",
@@ -794,6 +805,185 @@ function isFarDistance(distanceLevel) {
   return distanceLevel === "10km\u4EE5\u4E0A" || distanceLevel === "far";
 }
 
+// new-agent-a-module/src/planner/liveRoutePlanner.ts
+var DEFAULT_TIMEOUT_MS = 6500;
+var AMAP_PLACE_URL = "https://restapi.amap.com/v3/place/text";
+var SHENZHEN_DISTRICTS = ["\u798F\u7530", "\u5357\u5C71", "\u7F57\u6E56", "\u5B9D\u5B89", "\u9F99\u5C97", "\u9F99\u534E", "\u76D0\u7530", "\u576A\u5C71", "\u5149\u660E", "\u5927\u9E4F"];
+async function buildLiveRoute(requirements, theme, options = {}) {
+  return withTimeout(buildLiveRouteInner(requirements, theme, options), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+}
+async function buildLiveRouteInner(requirements, theme, options) {
+  const keywords = buildSearchKeywords(requirements, theme);
+  const excludeIds = new Set(options.excludeIds ?? []);
+  const results = await Promise.all(keywords.map((keyword) => searchAmap(keyword, requirements)));
+  const candidates = uniquePois(results.flat()).filter((poi) => !excludeIds.has(poi.id)).slice(0, 36);
+  if (candidates.length < 2) return null;
+  const route = buildRoute(requirements, candidates, theme);
+  if (route.steps.length < 2) return null;
+  return { route, candidates, keywords };
+}
+function buildSearchKeywords(requirements, theme) {
+  const district = extractDistrict(requirements.rawText);
+  const areaPrefix = district ? `${district} ` : `${requirements.city || "\u6DF1\u5733"} `;
+  const themeKeywords = {
+    "\u5C0F\u4F17\u62CD\u7167\u5403\u8D27\u76D2": ["\u5C0F\u4F17\u5496\u5561", "\u62CD\u7167\u6253\u5361", "\u751C\u54C1\u5496\u5561", "\u521B\u610F\u9910\u5385", "\u827A\u672F\u7A7A\u95F4"],
+    "\u96E8\u5929\u5BA4\u5185\u56DE\u8840\u76D2": ["\u8D2D\u7269\u4E2D\u5FC3", "\u5BC6\u5BA4\u9003\u8131", "\u7535\u5F71\u9662", "DIY\u624B\u5DE5", "\u5496\u5561\u9986"],
+    "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2": ["\u4EB2\u5B50\u4E50\u56ED", "\u513F\u7AE5\u4F53\u9A8C", "\u4EB2\u5B50\u9910\u5385", "\u5BA4\u5185\u6E38\u4E50\u573A", "\u516C\u56ED"],
+    "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2": ["\u4E66\u5E97\u5496\u5561", "\u516C\u56ED\u6563\u6B65", "\u7F8E\u672F\u9986", "\u521B\u610F\u56ED", "citywalk"],
+    "\u7701\u94B1\u5FEB\u4E50\u76D2": ["\u514D\u8D39\u516C\u56ED", "\u5E73\u4EF7\u7F8E\u98DF", "\u5496\u5561\u9986", "\u5C0F\u5403", "\u8D2D\u7269\u4E2D\u5FC3"],
+    "\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2": ["\u4F11\u95F2\u5A31\u4E50", "\u5496\u5561\u9986", "\u7F8E\u98DF", "\u62CD\u7167\u6253\u5361", "\u8D2D\u7269\u4E2D\u5FC3"]
+  };
+  const fromTheme = themeKeywords[theme] ?? themeKeywords["\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2"];
+  const fromPrefs = requirements.preferences.slice(0, 3).map((preference) => `${preference} \u5468\u672B`);
+  return [...new Set([...fromTheme, ...fromPrefs].map((keyword) => `${areaPrefix}${keyword}`))].slice(0, 5);
+}
+async function searchAmap(keyword, requirements) {
+  const amapKey = process.env.AMAP_API_KEY || process.env.AMAP_WEB_SERVICE_KEY || "cd4379a23805ac32e432f0e5db663013";
+  const url = new URL(AMAP_PLACE_URL);
+  url.searchParams.set("key", amapKey);
+  url.searchParams.set("keywords", keyword);
+  url.searchParams.set("city", requirements.city || "\u6DF1\u5733");
+  url.searchParams.set("citylimit", "true");
+  url.searchParams.set("offset", "8");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("extensions", "base");
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (data.status !== "1" || !Array.isArray(data.pois)) return [];
+    return data.pois.filter((item) => isUsableAmapPoi(item)).map((item, index) => poiFromAmap(item, index, keyword, requirements)).filter((poi) => Boolean(poi));
+  } catch {
+    return [];
+  }
+}
+function isUsableAmapPoi(item) {
+  const text = `${item.name || ""} ${item.type || ""}`;
+  if (!item.name) return false;
+  if (/政府|委员会|办事处|派出所|停车场|收费站|公交站|地铁站|道路|路口|出入口|住宅|小区|写字楼|公司|银行|医院|学校|照相|摄影|婚纱|写真|证件照|儿童摄影|汉服体验|旅拍/.test(text)) return false;
+  if (/地名地址信息|道路附属设施|交通设施服务|政府机构|公司企业|商务住宅|生活服务;摄影冲印店/.test(text)) return false;
+  return /餐饮|购物|商场|娱乐|体育休闲|影剧院|风景名胜|科教文化|咖啡|茶艺|甜品|美术馆|博物馆|书店|公园|生活服务/.test(text);
+}
+function poiFromAmap(item, index, keyword, requirements) {
+  if (!item.name) return null;
+  const [lng, lat] = parseLocation(item.location);
+  const type = inferPoiType(item, keyword);
+  const price = simulatePrice(type);
+  const area = item.adname || extractDistrict(requirements.rawText) || requirements.city || "\u6DF1\u5733";
+  return {
+    id: `live_route_${item.id || `${Date.now()}_${index}`}`,
+    name: item.name,
+    type,
+    subType: inferSubType(item, type),
+    address: Array.isArray(item.address) ? item.address.join("") : item.address,
+    area,
+    businessDistrict: normalizeBusinessArea(item.business_area, area),
+    routeCluster: `live:${area}`,
+    price,
+    meituanRating: 4.5,
+    reviewCount: 800 + index * 137,
+    tags: buildTags(type, keyword, requirements),
+    limits: buildLimits(type, keyword),
+    fitPeople: ["\u5355\u4EBA", "\u60C5\u4FA3", "\u670B\u53CB", "\u4EB2\u5B50"],
+    stayMinutes: simulateStayMinutes(type),
+    queueLevel: index % 4 === 0 ? "medium" : "low",
+    distanceLevel: "3-10km",
+    mockMeituanUrl: `mock://amap/${item.id || index}`,
+    reason: `Agent \u6839\u636E\u300C${keyword}\u300D\u5B9E\u65F6\u68C0\u7D22\u5230\u8BE5\u5730\u70B9\uFF0C\u5E76\u6309\u300C${requirements.blindBoxTheme || "\u60CA\u559C\u76F2\u76D2"}\u300D\u98CE\u683C\u7EB3\u5165\u5019\u9009\u3002`,
+    blindBoxThemes: requirements.blindBoxTheme ? [requirements.blindBoxTheme] : void 0,
+    availableTools: ["amapPlaceSearch", "queueCheck", "availabilityCheck"],
+    bookingRequired: false,
+    weatherSensitive: !buildLimits(type, keyword).includes("\u5BA4\u5185"),
+    priorityScore: 78 - index,
+    lat,
+    lng
+  };
+}
+function inferPoiType(item, keyword) {
+  const text = `${item.type || ""} ${keyword} ${item.name || ""}`;
+  if (/咖啡|甜品|茶|奶茶|饮品|面包/.test(text)) return "\u8F7B\u98DF\u751C\u996E";
+  if (/餐饮|美食|饭|火锅|烧烤|餐厅|小吃/.test(text)) return "\u9910\u996E\u6B63\u9910";
+  if (/展|美术馆|博物馆|书店|文化|手作|手工|DIY|diy|陶艺/.test(text)) return "\u6587\u5316\u4F53\u9A8C";
+  if (/公园|步道|绿地|海滨|散步|citywalk/i.test(text)) return "\u6237\u5916\u6563\u6B65";
+  if (/娱乐|商场|乐园|电影|KTV|密室|桌游|电玩城|亲子/.test(text)) return "\u4F11\u95F2\u5A31\u4E50";
+  if (/拍照|打卡|地标|夜景|广场/.test(text)) return "\u62CD\u7167\u5730\u6807";
+  return "\u4F11\u95F2\u5A31\u4E50";
+}
+function inferSubType(item, type) {
+  const rawType = item.type?.split(";").at(-1);
+  return rawType || type;
+}
+function simulatePrice(type) {
+  if (type === "\u9910\u996E\u6B63\u9910") return 90;
+  if (type === "\u8F7B\u98DF\u751C\u996E") return 38;
+  if (type === "\u4F11\u95F2\u5A31\u4E50") return 80;
+  return 0;
+}
+function simulateStayMinutes(type) {
+  if (type === "\u9910\u996E\u6B63\u9910") return 80;
+  if (type === "\u8F7B\u98DF\u751C\u996E") return 45;
+  if (type === "\u6587\u5316\u4F53\u9A8C") return 90;
+  if (type === "\u4F11\u95F2\u5A31\u4E50") return 100;
+  return 70;
+}
+function buildTags(type, keyword, requirements) {
+  const tags = new Set(requirements.preferences.slice(0, 4));
+  if (type === "\u9910\u996E\u6B63\u9910") tags.add("\u7F8E\u98DF");
+  if (type === "\u8F7B\u98DF\u751C\u996E") tags.add(keyword.includes("\u5496\u5561") ? "\u5496\u5561" : "\u751C\u54C1");
+  if (type === "\u6587\u5316\u4F53\u9A8C") tags.add("\u6587\u5316");
+  if (type === "\u6237\u5916\u6563\u6B65") tags.add("\u6237\u5916");
+  if (type === "\u4F11\u95F2\u5A31\u4E50") tags.add("\u89E3\u538B");
+  if (/拍照|打卡/.test(keyword)) tags.add("\u62CD\u7167");
+  if (/小众/.test(keyword)) tags.add("\u5C0F\u4F17");
+  return [...tags].slice(0, 6);
+}
+function buildLimits(type, keyword) {
+  const limits = /* @__PURE__ */ new Set(["\u9884\u7B97\u53CB\u597D"]);
+  if (/室内|商场|展览|咖啡|娱乐|书店|美术馆|博物馆/.test(keyword) || ["\u9910\u996E\u6B63\u9910", "\u8F7B\u98DF\u751C\u996E", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"].includes(type)) {
+    limits.add("\u5BA4\u5185");
+    limits.add("\u96E8\u5929\u53EF\u53BB");
+  } else {
+    limits.add("\u5BA4\u5916");
+  }
+  return [...limits];
+}
+function parseLocation(location) {
+  const [lngText, latText] = (location || "").split(",");
+  const lng = Number(lngText);
+  const lat = Number(latText);
+  return [Number.isFinite(lng) ? lng : void 0, Number.isFinite(lat) ? lat : void 0];
+}
+function normalizeBusinessArea(value, area) {
+  if (!value || value === "[]") return area;
+  return value;
+}
+function extractDistrict(text) {
+  const district = SHENZHEN_DISTRICTS.find((name) => text.includes(name));
+  return district ? `${district}\u533A` : void 0;
+}
+function uniquePois(pois2) {
+  const seen = /* @__PURE__ */ new Set();
+  return pois2.filter((poi) => {
+    const key = poi.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+async function withTimeout(promise, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 // new-agent-a-module/src/tools/checkAvailability.ts
 async function checkAvailability(route) {
   return route.steps.map((step) => ({
@@ -929,12 +1119,17 @@ async function generatePlan(userInput, options = {}) {
   const pois2 = options.pois ?? mockPois;
   const requirements = await parseIntent(userInput);
   const theme = selectBlindBoxTheme(requirements);
-  const route = buildRoute(requirements, pois2, theme);
+  const liveResult = await buildLiveRoute(requirements, theme);
+  const route = liveResult?.route ?? buildRoute(requirements, pois2, theme);
   const [queueResults, availabilityResults] = await Promise.all([
     checkQueue(route),
     checkAvailability(route)
   ]);
-  const toolStatus = [...queueResults, ...availabilityResults];
+  const toolStatus = [
+    buildLiveRouteToolStatus(liveResult, requirements.blindBoxTheme),
+    ...queueResults,
+    ...availabilityResults
+  ];
   const executionTasks = options.executeImmediately ? await reserveOrJoinPlan(route) : [];
   const blindBox = composeBlindBox(theme, route, requirements, toolStatus);
   return {
@@ -944,6 +1139,18 @@ async function generatePlan(userInput, options = {}) {
     toolStatus,
     executionTasks,
     planB: null
+  };
+}
+function buildLiveRouteToolStatus(liveResult, selectedTheme) {
+  return {
+    toolName: "amapLiveRouteSearch",
+    status: liveResult ? "success" : "failed",
+    message: liveResult ? `\u5DF2\u6309${selectedTheme || "\u76F2\u76D2\u98CE\u683C"}\u5B9E\u65F6\u68C0\u7D22 ${liveResult.candidates.length} \u4E2A\u6DF1\u5733\u5019\u9009\u70B9\u3002` : "\u5B9E\u65F6\u5730\u70B9\u68C0\u7D22\u8D85\u65F6\u6216\u5019\u9009\u4E0D\u8DB3\uFF0C\u5DF2\u542F\u7528\u672C\u5730 Mock POI \u4FDD\u5E95\u3002",
+    result: liveResult ? {
+      keywords: liveResult.keywords,
+      candidateCount: liveResult.candidates.length,
+      routeNames: liveResult.route.steps.map((step) => step.poi.name)
+    } : void 0
   };
 }
 

@@ -25,8 +25,17 @@ const MOCK_SUGGESTIONS = [
   '一个人想找个安静的地方看书喝咖啡',
 ];
 
+const BLIND_BOX_THEMES = [
+  { value: '惊喜盲盒', label: '惊喜盲盒', desc: '让 Agent 自动判断风格' },
+  { value: '小众拍照吃货盒', label: '小众拍照吃货盒', desc: '打卡、咖啡和美食优先' },
+  { value: '雨天室内回血盒', label: '雨天室内回血盒', desc: '室内、解压、稳定执行' },
+  { value: '亲子轻松放电盒', label: '亲子轻松放电盒', desc: '低强度亲子半日路线' },
+  { value: '城市散步疗愈盒', label: '城市散步疗愈盒', desc: '散步、安静和轻体验' },
+  { value: '省钱快乐盒', label: '省钱快乐盒', desc: '预算友好和性价比' },
+];
+
 interface Props {
-  onSubmit: (rawText: string) => void;
+  onSubmit: (rawText: string, quickSelections?: Record<string, unknown>) => void;
   isLoading: boolean;
   llmConfig: LlmReplanConfig;
   onLlmConfigChange: (config: LlmReplanConfig) => void;
@@ -34,13 +43,14 @@ interface Props {
 
 export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfigChange }: Props) {
   const [rawText, setRawText] = useState('');
+  const [blindBoxTheme, setBlindBoxTheme] = useState('惊喜盲盒');
   const [showModelConfig, setShowModelConfig] = useState(false);
   const [placeholder] = useState(() => PLACEHOLDERS[Math.floor(Math.random() * PLACEHOLDERS.length)]);
 
   const handleSubmit = () => {
     const text = rawText.trim();
     if (!text) return;
-    onSubmit(text);
+    onSubmit(text, { blindBoxTheme });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -205,6 +215,39 @@ export default function InputPanel({ onSubmit, isLoading, llmConfig, onLlmConfig
                   </label>
                 </div>
               )}
+            </div>
+
+            <div className="mt-5 rounded-[1.5rem] border border-amber-200/70 bg-white/64 p-4 shadow-sm backdrop-blur">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-extrabold text-purple-950">选择盲盒类型</p>
+                  <p className="mt-1 text-xs font-semibold text-purple-500">不确定就选惊喜盲盒，Agent 会自动判断。</p>
+                </div>
+                <span className="hidden rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-700 sm:inline-flex">
+                  路线风格约束
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {BLIND_BOX_THEMES.map((theme) => {
+                  const active = blindBoxTheme === theme.value;
+                  return (
+                    <button
+                      key={theme.value}
+                      type="button"
+                      onClick={() => setBlindBoxTheme(theme.value)}
+                      disabled={isLoading}
+                      className={`rounded-2xl border px-4 py-3 text-left transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-40 ${
+                        active
+                          ? 'border-amber-300 bg-amber-50 text-purple-950 shadow-md shadow-amber-200/40'
+                          : 'border-purple-100 bg-white/72 text-purple-800 hover:border-purple-300 hover:bg-purple-50'
+                      }`}
+                    >
+                      <span className="block text-sm font-extrabold">{theme.label}</span>
+                      <span className="mt-1 block text-xs font-semibold leading-5 text-purple-500">{theme.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="mt-5 flex flex-wrap justify-center gap-2.5">

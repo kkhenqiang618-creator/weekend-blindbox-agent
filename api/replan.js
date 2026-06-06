@@ -57,6 +57,10 @@ var THEME_RULES = [
     storyPrefix: "\u7528\u6563\u6B65\u3001\u5B89\u9759\u4F11\u606F\u548C\u8F7B\u4F53\u9A8C\u7EC4\u6210\u4E00\u6761\u4E0D\u7528\u505A\u592A\u591A\u9009\u62E9\u7684\u57CE\u5E02\u8DEF\u7EBF\u3002"
   }
 ];
+function selectBlindBoxTheme(requirements) {
+  if (requirements.blindBoxTheme) return requirements.blindBoxTheme;
+  return THEME_RULES.find((rule) => rule.match(requirements))?.theme ?? "\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2";
+}
 function composeBlindBox(theme, route, requirements, toolResults) {
   const rule = THEME_RULES.find((item) => item.theme === theme);
   const routeNames = route.steps.map((step) => step.poi.name).join(" -> ");
@@ -72,6 +76,268 @@ function composeBlindBox(theme, route, requirements, toolResults) {
 }
 function hasAny(values, targets) {
   return targets.some((target) => values.includes(target));
+}
+
+// new-agent-a-module/src/agent/intentRules.ts
+var DEFAULT_CITY = "\u6DF1\u5733";
+var DEFAULT_DURATION_HOURS = 4;
+var DEFAULT_BUDGET_MAX = 300;
+var DEFAULT_PEOPLE_TYPE = "\u670B\u53CB";
+var KNOWN_CITIES = ["\u6DF1\u5733", "\u4E0A\u6D77", "\u5317\u4EAC", "\u5E7F\u5DDE", "\u676D\u5DDE", "\u6210\u90FD", "\u6B66\u6C49", "\u5357\u4EAC"];
+function parseIntentWithRules(userInput) {
+  const rawText = userInput.rawText || "";
+  const quick = userInput.quickSelections ?? {};
+  const preferences = unique([
+    ...extractPreferences(rawText),
+    ...quick.preferences ?? []
+  ]);
+  const constraints = unique([
+    ...extractConstraints(rawText),
+    ...quick.constraints ?? []
+  ]);
+  return {
+    city: quick.city ?? extractCity(rawText) ?? DEFAULT_CITY,
+    durationHours: quick.durationHours ?? extractDurationHours(rawText) ?? DEFAULT_DURATION_HOURS,
+    budgetMax: normalizeBudget(quick.budget) ?? extractBudget(rawText) ?? DEFAULT_BUDGET_MAX,
+    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText),
+    peopleType: quick.peopleType ?? extractPeopleType(rawText) ?? DEFAULT_PEOPLE_TYPE,
+    preferences: preferences.length > 0 ? preferences : ["\u7F8E\u98DF", "\u4F11\u95F2"],
+    constraints,
+    timeText: extractTimeText(rawText),
+    rawText,
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme),
+    intentSource: "rules"
+  };
+}
+function applyQuickSelections(requirements, userInput) {
+  const quick = userInput.quickSelections ?? {};
+  return {
+    ...requirements,
+    city: quick.city ?? requirements.city,
+    durationHours: quick.durationHours ?? requirements.durationHours,
+    budgetMax: normalizeBudget(quick.budget) ?? requirements.budgetMax,
+    distanceLevel: quick.distanceLevel ?? requirements.distanceLevel,
+    peopleType: quick.peopleType ?? requirements.peopleType,
+    preferences: unique([...requirements.preferences ?? [], ...quick.preferences ?? []]),
+    constraints: unique([...requirements.constraints ?? [], ...quick.constraints ?? []]),
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme) ?? requirements.blindBoxTheme
+  };
+}
+function normalizeRequirements(input, userInput) {
+  const ruleFallback = parseIntentWithRules(userInput);
+  const normalized = {
+    city: typeof input.city === "string" && input.city ? input.city : ruleFallback.city,
+    durationHours: toPositiveNumber(input.durationHours) ?? ruleFallback.durationHours,
+    budgetMax: toPositiveNumber(input.budgetMax) ?? ruleFallback.budgetMax,
+    distanceLevel: typeof input.distanceLevel === "string" && input.distanceLevel ? input.distanceLevel : ruleFallback.distanceLevel,
+    peopleType: isPeopleType(input.peopleType) ? input.peopleType : ruleFallback.peopleType,
+    preferences: normalizeStringArray(input.preferences, ruleFallback.preferences),
+    constraints: normalizeStringArray(input.constraints, ruleFallback.constraints),
+    timeText: typeof input.timeText === "string" && input.timeText ? input.timeText : ruleFallback.timeText,
+    rawText: userInput.rawText || "",
+    blindBoxTheme: normalizeTheme(input.blindBoxTheme) ?? ruleFallback.blindBoxTheme,
+    intentSource: input.intentSource ?? "llm"
+  };
+  return applyQuickSelections(normalized, userInput);
+}
+function extractCity(text) {
+  return KNOWN_CITIES.find((city) => text.includes(city)) ?? null;
+}
+function extractDurationHours(text) {
+  const hourMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:个)?小时/);
+  if (hourMatch?.[1]) return Number(hourMatch[1]);
+  if (/半天|半日/.test(text)) return 4;
+  return null;
+}
+function extractBudget(text) {
+  const budgetMatch = text.match(/(?:预算|人均|控制在|不超过|以内)[^\d]*(\d+)/);
+  if (budgetMatch?.[1]) return Number(budgetMatch[1]);
+  if (/省钱|性价比|便宜/.test(text)) return 150;
+  return null;
+}
+function normalizeBudget(value) {
+  if (typeof value === "number") return value;
+  if (!value) return null;
+  const numbers = value.match(/\d+/g)?.map(Number) ?? [];
+  if (numbers.length === 0) return null;
+  return Math.max(...numbers);
+}
+function extractDistanceLevel(text) {
+  if (/少走路|别太累|近一点/.test(text)) return "3km\u5185";
+  if (/远一点|远也可以|10km/.test(text)) return "10km\u4EE5\u4E0A";
+  return null;
+}
+function extractPeopleType(text) {
+  if (/带娃|孩子|亲子|小朋友|宝宝/.test(text)) return "\u4EB2\u5B50";
+  if (/情侣|对象|约会|男朋友|女朋友/.test(text)) return "\u60C5\u4FA3";
+  if (/朋友|同学|团建|多人/.test(text)) return "\u670B\u53CB";
+  if (/一个人|单人|自己|我想|我现在|我有点|我想找|我想去|现在有点无聊|有点无聊|无聊/.test(text)) return "\u5355\u4EBA";
+  return null;
+}
+function extractPreferences(text) {
+  const preferences = [];
+  const mapping = [
+    [/拍照|出片|打卡/, "\u62CD\u7167"],
+    [/咖啡|拿铁|美式/, "\u5496\u5561"],
+    [/甜品|蛋糕|冰品/, "\u751C\u54C1"],
+    [/美食|吃饭|吃点东西|小吃|餐厅|简餐/, "\u7F8E\u98DF"],
+    [/文化|看展|展览|书店|博物馆/, "\u6587\u5316"],
+    [/户外|公园|散步|citywalk|徒步/, "\u6237\u5916"],
+    [/运动|健身/, "\u8FD0\u52A8"],
+    [/解压|疗愈|放松|回血/, "\u89E3\u538B"],
+    [/小众|宝藏|人少/, "\u5C0F\u4F17"],
+    [/省钱|性价比|便宜/, "\u6027\u4EF7\u6BD4"]
+  ];
+  for (const [pattern, label] of mapping) {
+    if (pattern.test(text)) preferences.push(label);
+  }
+  return preferences;
+}
+function extractConstraints(text) {
+  const constraints = [];
+  const mapping = [
+    [/不排队|不想排队|少排队|别排队/, "\u4E0D\u60F3\u6392\u961F"],
+    [/少走路|别太累|轻松/, "\u5C11\u8D70\u8DEF"],
+    [/室内|下雨|雨天/, "\u5BA4\u5185\u4F18\u5148"],
+    [/宠物/, "\u5BA0\u7269\u53CB\u597D"],
+    [/预算|省钱|便宜|性价比/, "\u9884\u7B97\u53CB\u597D"]
+  ];
+  for (const [pattern, label] of mapping) {
+    if (pattern.test(text)) constraints.push(label);
+  }
+  return constraints;
+}
+function extractTimeText(text) {
+  const match = text.match(/(周[一二三四五六日天]|明天|后天|今天|下午|晚上|上午|中午)/g);
+  return match?.join("") || "\u5468\u672B\u4E0B\u5348";
+}
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+function toPositiveNumber(value) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+function normalizeStringArray(value, fallback) {
+  if (!Array.isArray(value)) return fallback;
+  const normalized = unique(value.filter((item) => typeof item === "string" && item.trim().length > 0));
+  return normalized.length > 0 ? normalized : fallback;
+}
+function isPeopleType(value) {
+  return value === "\u5355\u4EBA" || value === "\u60C5\u4FA3" || value === "\u670B\u53CB" || value === "\u4EB2\u5B50";
+}
+function normalizeTheme(value) {
+  if (typeof value !== "string") return void 0;
+  const theme = value.trim();
+  if (!theme || theme === "\u60CA\u559C\u76F2\u76D2") return void 0;
+  return theme;
+}
+
+// new-agent-a-module/src/agent/llmIntentParser.ts
+var DEFAULT_MODEL = "deepseek-chat";
+var DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
+async function parseIntentWithLLM(userInput) {
+  const apiKey = getLlmApiKey();
+  if (!apiKey) return null;
+  const baseUrl = getLlmBaseUrl();
+  const model = getLlmModel();
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "\u4F60\u662F\u672C\u5730\u751F\u6D3B\u5468\u672B\u51FA\u6E38 Agent \u7684\u610F\u56FE\u89E3\u6790\u5668\u3002",
+            "\u8BF7\u628A\u7528\u6237\u7684\u4E00\u53E5\u8BDD\u76EE\u6807\u89E3\u6790\u4E3A\u4E25\u683C JSON\uFF0C\u4E0D\u8981\u8F93\u51FA\u89E3\u91CA\u3002",
+            "\u5B57\u6BB5\u5FC5\u987B\u5305\u542B\uFF1Acity, durationHours, budgetMax, distanceLevel, peopleType, preferences, constraints, timeText\u3002",
+            "\u5982\u679C quickSelections.blindBoxTheme \u5B58\u5728\uFF0C\u8BF7\u4E0D\u8981\u6539\u5199\u5B83\uFF1B\u8FD9\u4E2A\u5B57\u6BB5\u4EE3\u8868\u7528\u6237\u660E\u786E\u9009\u62E9\u7684\u76F2\u76D2\u8DEF\u7EBF\u98CE\u683C\u3002",
+            "peopleType \u53EA\u80FD\u662F\uFF1A\u5355\u4EBA\u3001\u60C5\u4FA3\u3001\u670B\u53CB\u3001\u4EB2\u5B50\u3002",
+            "preferences \u548C constraints \u5FC5\u987B\u662F\u5B57\u7B26\u4E32\u6570\u7EC4\u3002",
+            "\u8BF7\u4F18\u5148\u6839\u636E\u7528\u6237\u539F\u8BDD\u505A\u8BED\u4E49\u5224\u65AD\uFF0C\u4E0D\u8981\u673A\u68B0\u5957\u7528\u9ED8\u8BA4\u503C\u3002",
+            "\u57CE\u5E02\uFF1A\u7528\u6237\u6CA1\u8BF4\u65F6\u9ED8\u8BA4\u6DF1\u5733\u3002",
+            "\u65F6\u957F\uFF1A\u7528\u6237\u6CA1\u8BF4\u65F6\uFF0C\u6839\u636E\u201C\u73B0\u5728\u3001\u534A\u5929\u3001\u4E0B\u5348\u3001\u665A\u4E0A\u3001\u5468\u672B\u201D\u7B49\u8BED\u5883\u63A8\u65AD\uFF1B\u4ECD\u65E0\u6CD5\u5224\u65AD\u65F6\u75284\u5C0F\u65F6\u3002",
+            "\u9884\u7B97\uFF1A\u7528\u6237\u6CA1\u8BF4\u65F6\uFF0C\u6839\u636E\u8BED\u6C14\u548C\u6D3B\u52A8\u7C7B\u578B\u63A8\u65AD\u5408\u7406\u9884\u7B97\uFF1B\u4ECD\u65E0\u6CD5\u5224\u65AD\u65F6\u7528300\u3002",
+            "\u540C\u884C\u4EBA\uFF1A\u8BF7\u6839\u636E\u8BED\u4E49\u5224\u65AD\u3002\u5E26\u5A03/\u5B69\u5B50/\u4EB2\u5B50\u901A\u5E38\u662F\u4EB2\u5B50\uFF1B\u5BF9\u8C61/\u60C5\u4FA3/\u7EA6\u4F1A\u901A\u5E38\u662F\u60C5\u4FA3\uFF1B\u670B\u53CB/\u540C\u5B66/\u540C\u4E8B/\u56E2\u5EFA/\u591A\u4EBA\u901A\u5E38\u662F\u670B\u53CB\uFF1B\u5982\u679C\u7528\u6237\u4EE5\u7B2C\u4E00\u4EBA\u79F0\u8868\u8FBE\u81EA\u5DF1\u60F3\u51FA\u53BB\uFF0C\u5982\u201C\u6211\u73B0\u5728\u6709\u70B9\u65E0\u804A\u201D\u201C\u6211\u60F3\u627E\u4E2A\u5730\u65B9\u201D\uFF0C\u4E14\u6CA1\u6709\u63D0\u5230\u540C\u884C\u4EBA\uFF0C\u901A\u5E38\u662F\u5355\u4EBA\u3002\u82E5\u6CA1\u6709\u660E\u786E\u5173\u952E\u8BCD\uFF0C\u4E5F\u8BF7\u7ED3\u5408\u6574\u53E5\u8BDD\u9009\u62E9\u6700\u5408\u7406\u7684 peopleType\uFF0C\u4E0D\u8981\u56FA\u5B9A\u9ED8\u8BA4\u670B\u53CB\u3002",
+            "preferences\uFF1A\u4ECE\u8BED\u4E49\u4E2D\u62BD\u53D6\u7528\u6237\u771F\u6B63\u60F3\u8981\u7684\u4F53\u9A8C\uFF0C\u5982\u62CD\u7167\u3001\u5496\u5561\u3001\u7F8E\u98DF\u3001\u6587\u5316\u3001\u6237\u5916\u3001\u8FD0\u52A8\u3001\u89E3\u538B\u3001\u5C0F\u4F17\u3001\u6027\u4EF7\u6BD4\u3001\u4F11\u95F2\u7B49\u3002",
+            "constraints\uFF1A\u62BD\u53D6\u9650\u5236\u6761\u4EF6\uFF0C\u5982\u4E0D\u60F3\u6392\u961F\u3001\u5C11\u8D70\u8DEF\u3001\u5BA4\u5185\u4F18\u5148\u3001\u9884\u7B97\u53CB\u597D\u3001\u96E8\u5929\u53EF\u53BB\u7B49\u3002",
+            "timeText\uFF1A\u4FDD\u7559\u7528\u6237\u63D0\u5230\u7684\u65F6\u95F4\u8868\u8FBE\uFF0C\u5982\u73B0\u5728\u3001\u5468\u516D\u4E0B\u5348\u3001\u660E\u5929\u4E0B\u5348\u3001\u5468\u672B\u665A\u4E0A\uFF1B\u5982\u679C\u6CA1\u8BF4\uFF0C\u7ED3\u5408\u8BED\u5883\u7ED9\u51FA\u81EA\u7136\u65F6\u95F4\uFF0C\u5982\u73B0\u5728\u6216\u5468\u672B\u4E0B\u5348\u3002",
+            "distanceLevel\uFF1A\u5982\u679C\u7528\u6237\u6CA1\u660E\u786E\u8BF4\u8DDD\u79BB\uFF0C\u8FD4\u56DE\u7A7A\u5B57\u7B26\u4E32\u3002"
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            rawText: userInput.rawText,
+            quickSelections: userInput.quickSelections ?? {}
+          })
+        }
+      ]
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`LLM intent parsing request failed: ${response.status}`);
+  }
+  const data = await response.json();
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("LLM intent parsing returned empty content");
+  }
+  const parsed = safeParseJson(content);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("LLM intent parsing returned invalid JSON");
+  }
+  return normalizeRequirements(
+    {
+      ...parsed,
+      intentSource: "llm"
+    },
+    userInput
+  );
+}
+function getLlmApiKey() {
+  return process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
+}
+function getLlmBaseUrl() {
+  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
+}
+function getLlmModel() {
+  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
+}
+function safeParseJson(content) {
+  try {
+    return JSON.parse(content);
+  } catch {
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]);
+  }
+}
+
+// new-agent-a-module/src/agent/intentParser.ts
+async function parseIntent(userInput) {
+  try {
+    const llmRequirements = await parseIntentWithLLM(userInput);
+    if (llmRequirements) return llmRequirements;
+  } catch (error) {
+    return {
+      ...parseIntentWithRules(userInput),
+      intentSource: "rules",
+      intentFallbackReason: error instanceof Error ? error.message : "LLM intent parsing failed"
+    };
+  }
+  return {
+    ...parseIntentWithRules(userInput),
+    intentSource: "rules",
+    intentFallbackReason: "LLM is not configured"
+  };
 }
 
 // new-agent-a-module/src/mock/mockPois.ts
@@ -298,6 +564,66 @@ var mockPois = [
 ];
 
 // new-agent-a-module/src/planner/simpleRoutePlanner.ts
+function buildRoute(requirements, pois2, theme) {
+  const allCandidates = filterPois(requirements, pois2, theme);
+  const explicitActivityTypes = getExplicitActivityTypes(requirements);
+  const routeCluster = selectRouteCluster(allCandidates, requirements, theme, explicitActivityTypes);
+  const clusteredCandidates = routeCluster ? allCandidates.filter((poi) => poi.routeCluster === routeCluster) : allCandidates;
+  const candidates = clusteredCandidates.length >= 2 ? clusteredCandidates : allCandidates;
+  const steps = [];
+  const targetMinutes = Math.max(180, Math.min(360, requirements.durationHours * 60));
+  const maxMinutes = targetMinutes + 30;
+  const firstActivity = pickFirst(
+    candidates,
+    explicitActivityTypes.length > 0 ? explicitActivityTypes : ["\u62CD\u7167\u5730\u6807", "\u6237\u5916\u6563\u6B65", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"]
+  );
+  addStepIfFits(steps, firstActivity, maxMinutes);
+  const breakStop = pickFirst(candidates, ["\u8F7B\u98DF\u751C\u996E"], usedIds(steps));
+  addStepIfFits(steps, breakStop, maxMinutes);
+  const meal = pickFirst(candidates, ["\u9910\u996E\u6B63\u9910"], usedIds(steps));
+  addStepIfFits(steps, meal, maxMinutes);
+  const ending = pickFirst(candidates, ["\u62CD\u7167\u5730\u6807", "\u6237\u5916\u6563\u6B65", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"], usedIds(steps));
+  addStepIfFits(steps, ending, maxMinutes);
+  for (const candidate of candidates) {
+    if (steps.length >= 4) break;
+    if (usedIds(steps).includes(candidate.id)) continue;
+    if (candidate.type === "\u9910\u996E\u6B63\u9910" && steps.some((step) => step.poi.type === "\u9910\u996E\u6B63\u9910")) continue;
+    if (candidate.type === "\u8F7B\u98DF\u751C\u996E" && steps.some((step) => step.poi.type === "\u8F7B\u98DF\u751C\u996E")) continue;
+    addStepIfFits(steps, candidate, maxMinutes);
+  }
+  const selected = steps.length >= 2 ? steps.map((step) => step.poi) : candidates.slice(0, Math.min(3, candidates.length));
+  steps.length = 0;
+  selected.forEach((poi, index) => {
+    steps.push({
+      order: index + 1,
+      role: inferRole(poi, index),
+      poi,
+      note: poi.reason
+    });
+  });
+  return summarizeRoute(steps, explicitActivityTypes);
+}
+function filterPois(requirements, pois2, theme) {
+  return pois2.filter((poi) => poi.price <= requirements.budgetMax).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => {
+    if (isFarDistance(poi.distanceLevel) && requirements.distanceLevel !== "10km\u4EE5\u4E0A") return false;
+    if (!requirements.distanceLevel || !poi.distanceLevel) return true;
+    if (isNearOrMediumDistance(requirements.distanceLevel)) return isNearOrMediumDistance(poi.distanceLevel);
+    return poi.distanceLevel === requirements.distanceLevel;
+  }).filter((poi) => {
+    if (requirements.constraints.includes("\u4E0D\u60F3\u6392\u961F")) return poi.queueLevel !== "high";
+    return true;
+  }).filter((poi) => {
+    if (requirements.constraints.includes("\u5BA4\u5185\u4F18\u5148") || hasIndoorIntent(requirements)) {
+      return poi.limits.includes("\u5BA4\u5185") || poi.limits.includes("\u96E8\u5929\u53EF\u53BB") || poi.weatherSensitive === false;
+    }
+    return true;
+  }).sort((a, b) => scorePoi(b, requirements, theme) - scorePoi(a, requirements, theme));
+}
+function rerollRoute(requirements, previousRoute, pois2, theme) {
+  const previousIds = new Set(previousRoute.steps.map((step) => step.poi.id));
+  const remainingPois = pois2.filter((poi) => !previousIds.has(poi.id));
+  return buildRoute(requirements, remainingPois.length > 0 ? remainingPois : pois2, theme);
+}
 function replanRoute(event, currentRoute, pois2, requirements) {
   const targetStep = findTargetStep(event, currentRoute);
   const changes = [];
@@ -428,6 +754,23 @@ function resolvePreferredReplacement(event, pois2, requirements) {
 function normalizeName(name) {
   return name.trim().toLowerCase().replace(/\s+/g, "");
 }
+function pickFirst(candidates, types, excludedIds = []) {
+  return candidates.find((poi) => types.includes(poi.type) && !excludedIds.includes(poi.id));
+}
+function addStepIfFits(steps, poi, maxMinutes) {
+  if (!poi) return;
+  const currentMinutes = steps.reduce((sum, step) => sum + step.poi.stayMinutes, 0);
+  if (currentMinutes + poi.stayMinutes > maxMinutes && steps.length >= 2) return;
+  steps.push({
+    order: steps.length + 1,
+    role: inferRole(poi, steps.length),
+    poi,
+    note: poi.reason
+  });
+}
+function usedIds(steps) {
+  return steps.map((step) => step.poi.id);
+}
 function inferRole(poi, index) {
   if (poi.type === "\u9910\u996E\u6B63\u9910") return "meal";
   if (poi.type === "\u8F7B\u98DF\u751C\u996E") return "break";
@@ -445,6 +788,38 @@ function summarizeRoute(steps, preferredFirstTypes = []) {
       role: inferRole(step.poi, index)
     }))
   };
+}
+function getExplicitActivityTypes(requirements) {
+  const text = [
+    requirements.rawText,
+    ...requirements.preferences,
+    ...requirements.constraints
+  ].join(" ");
+  const types = [];
+  if (/室内.*(娱乐|玩|活动)|娱乐.*室内|电玩城|桌游|密室|KTV|电影|游戏|剧本/.test(text)) {
+    types.push("\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/diy|DIY|手工|手作|陶艺|银饰|香薰|烘焙|画画|绘画/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50");
+  }
+  if (/展|美术馆|博物馆|艺术|文化|书店/.test(text)) {
+    types.push("\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/拍照|打卡|出片|地标|夜景/.test(text)) {
+    types.push("\u62CD\u7167\u5730\u6807", "\u6587\u5316\u4F53\u9A8C");
+  }
+  if (/公园|散步|户外|徒步|citywalk/i.test(text)) {
+    types.push("\u6237\u5916\u6563\u6B65");
+  }
+  return [...new Set(types)];
+}
+function hasIndoorIntent(requirements) {
+  const text = [
+    requirements.rawText,
+    ...requirements.preferences,
+    ...requirements.constraints
+  ].join(" ");
+  return /室内|下雨|雨天/.test(text);
 }
 function orderStepsSpatially(steps, preferredFirstTypes = []) {
   if (steps.length < 3 || steps.length > 5) return steps;
@@ -536,6 +911,22 @@ function scorePoi(poi, requirements, theme) {
   if (poi.stayMinutes > 150) score -= 8;
   return score;
 }
+function selectRouteCluster(candidates, requirements, theme, requiredTypes = []) {
+  const clusters = /* @__PURE__ */ new Map();
+  for (const poi of candidates) {
+    if (!poi.routeCluster) continue;
+    const bucket = clusters.get(poi.routeCluster) ?? { score: 0, types: /* @__PURE__ */ new Set(), count: 0 };
+    bucket.score += scorePoi(poi, requirements, theme);
+    bucket.types.add(poi.type);
+    bucket.count += 1;
+    clusters.set(poi.routeCluster, bucket);
+  }
+  return [...clusters.entries()].filter(([, bucket]) => bucket.count >= 2).filter(([, bucket]) => requiredTypes.length === 0 || requiredTypes.some((type) => bucket.types.has(type))).sort(([, a], [, b]) => {
+    const scoreA = a.score + a.types.size * 35 + Math.min(a.count, 6) * 8;
+    const scoreB = b.score + b.types.size * 35 + Math.min(b.count, 6) * 8;
+    return scoreB - scoreA;
+  })[0]?.[0];
+}
 function findTargetStep(event, currentRoute) {
   if (event.poiId) return currentRoute.steps.find((step) => step.poi.id === event.poiId);
   if (event.type === "rain") {
@@ -547,14 +938,14 @@ function findTargetStep(event, currentRoute) {
   return currentRoute.steps.at(-1);
 }
 function findReplacement(event, targetPoi, pois2, requirements, currentRoute) {
-  const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
+  const usedIds2 = new Set(currentRoute.steps.map((step) => step.poi.id));
   const replaceableIds = targetPoi.replaceableBy ?? [];
   const requestedTypes = getRequestedReplacementTypes(event, targetPoi);
   const directReplacement = pois2.find(
-    (poi) => replaceableIds.includes(poi.id) && !usedIds.has(poi.id) && isNearEnoughForReplacement(poi, targetPoi) && matchesRequestedType(poi, requestedTypes)
+    (poi) => replaceableIds.includes(poi.id) && !usedIds2.has(poi.id) && isNearEnoughForReplacement(poi, targetPoi) && matchesRequestedType(poi, requestedTypes)
   );
   if (directReplacement && matchesEvent(event, directReplacement)) return directReplacement;
-  return pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => matchesRequestedType(poi, requestedTypes) || !event.customPreference?.trim() && (poi.type === targetPoi.type || event.type === "rain")).filter((poi) => isNearEnoughForReplacement(poi, targetPoi)).filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
+  return pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetPoi.price + 40)).filter((poi) => matchesRequestedType(poi, requestedTypes) || !event.customPreference?.trim() && (poi.type === targetPoi.type || event.type === "rain")).filter((poi) => isNearEnoughForReplacement(poi, targetPoi)).filter((poi) => matchesEvent(event, poi)).sort((a, b) => {
     const sameClusterA = a.routeCluster && a.routeCluster === targetPoi.routeCluster ? 35 : 0;
     const sameClusterB = b.routeCluster && b.routeCluster === targetPoi.routeCluster ? 35 : 0;
     const sameDistrictA = a.businessDistrict === targetPoi.businessDistrict ? 20 : 0;
@@ -603,6 +994,9 @@ function isNearDistance(distanceLevel) {
 function isMediumDistance(distanceLevel) {
   return distanceLevel === "3-10km" || distanceLevel === "medium" || distanceLevel === "\u4E2D\u7B49" || !distanceLevel;
 }
+function isNearOrMediumDistance(distanceLevel) {
+  return isNearDistance(distanceLevel) || isMediumDistance(distanceLevel);
+}
 function isFarDistance(distanceLevel) {
   return distanceLevel === "10km\u4EE5\u4E0A" || distanceLevel === "far";
 }
@@ -640,21 +1034,200 @@ function buildPlanBResult(event, beforeRoute, afterRoute, changes, requirements,
   };
 }
 
+// new-agent-a-module/src/planner/liveRoutePlanner.ts
+var DEFAULT_TIMEOUT_MS = 6500;
+var AMAP_PLACE_URL = "https://restapi.amap.com/v3/place/text";
+var SHENZHEN_DISTRICTS = ["\u798F\u7530", "\u5357\u5C71", "\u7F57\u6E56", "\u5B9D\u5B89", "\u9F99\u5C97", "\u9F99\u534E", "\u76D0\u7530", "\u576A\u5C71", "\u5149\u660E", "\u5927\u9E4F"];
+async function buildLiveRoute(requirements, theme, options = {}) {
+  return withTimeout(buildLiveRouteInner(requirements, theme, options), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+}
+async function buildLiveRouteInner(requirements, theme, options) {
+  const keywords = buildSearchKeywords(requirements, theme);
+  const excludeIds = new Set(options.excludeIds ?? []);
+  const results = await Promise.all(keywords.map((keyword) => searchAmap(keyword, requirements)));
+  const candidates = uniquePois(results.flat()).filter((poi) => !excludeIds.has(poi.id)).slice(0, 36);
+  if (candidates.length < 2) return null;
+  const route = buildRoute(requirements, candidates, theme);
+  if (route.steps.length < 2) return null;
+  return { route, candidates, keywords };
+}
+function buildSearchKeywords(requirements, theme) {
+  const district = extractDistrict(requirements.rawText);
+  const areaPrefix = district ? `${district} ` : `${requirements.city || "\u6DF1\u5733"} `;
+  const themeKeywords = {
+    "\u5C0F\u4F17\u62CD\u7167\u5403\u8D27\u76D2": ["\u5C0F\u4F17\u5496\u5561", "\u62CD\u7167\u6253\u5361", "\u751C\u54C1\u5496\u5561", "\u521B\u610F\u9910\u5385", "\u827A\u672F\u7A7A\u95F4"],
+    "\u96E8\u5929\u5BA4\u5185\u56DE\u8840\u76D2": ["\u8D2D\u7269\u4E2D\u5FC3", "\u5BC6\u5BA4\u9003\u8131", "\u7535\u5F71\u9662", "DIY\u624B\u5DE5", "\u5496\u5561\u9986"],
+    "\u4EB2\u5B50\u8F7B\u677E\u653E\u7535\u76D2": ["\u4EB2\u5B50\u4E50\u56ED", "\u513F\u7AE5\u4F53\u9A8C", "\u4EB2\u5B50\u9910\u5385", "\u5BA4\u5185\u6E38\u4E50\u573A", "\u516C\u56ED"],
+    "\u57CE\u5E02\u6563\u6B65\u7597\u6108\u76D2": ["\u4E66\u5E97\u5496\u5561", "\u516C\u56ED\u6563\u6B65", "\u7F8E\u672F\u9986", "\u521B\u610F\u56ED", "citywalk"],
+    "\u7701\u94B1\u5FEB\u4E50\u76D2": ["\u514D\u8D39\u516C\u56ED", "\u5E73\u4EF7\u7F8E\u98DF", "\u5496\u5561\u9986", "\u5C0F\u5403", "\u8D2D\u7269\u4E2D\u5FC3"],
+    "\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2": ["\u4F11\u95F2\u5A31\u4E50", "\u5496\u5561\u9986", "\u7F8E\u98DF", "\u62CD\u7167\u6253\u5361", "\u8D2D\u7269\u4E2D\u5FC3"]
+  };
+  const fromTheme = themeKeywords[theme] ?? themeKeywords["\u5468\u672B\u8F7B\u677E\u63A2\u7D22\u76D2"];
+  const fromPrefs = requirements.preferences.slice(0, 3).map((preference) => `${preference} \u5468\u672B`);
+  return [...new Set([...fromTheme, ...fromPrefs].map((keyword) => `${areaPrefix}${keyword}`))].slice(0, 5);
+}
+async function searchAmap(keyword, requirements) {
+  const amapKey = process.env.AMAP_API_KEY || process.env.AMAP_WEB_SERVICE_KEY || "cd4379a23805ac32e432f0e5db663013";
+  const url = new URL(AMAP_PLACE_URL);
+  url.searchParams.set("key", amapKey);
+  url.searchParams.set("keywords", keyword);
+  url.searchParams.set("city", requirements.city || "\u6DF1\u5733");
+  url.searchParams.set("citylimit", "true");
+  url.searchParams.set("offset", "8");
+  url.searchParams.set("page", "1");
+  url.searchParams.set("extensions", "base");
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (data.status !== "1" || !Array.isArray(data.pois)) return [];
+    return data.pois.filter((item) => isUsableAmapPoi(item)).map((item, index) => poiFromAmap(item, index, keyword, requirements)).filter((poi) => Boolean(poi));
+  } catch {
+    return [];
+  }
+}
+function isUsableAmapPoi(item) {
+  const text = `${item.name || ""} ${item.type || ""}`;
+  if (!item.name) return false;
+  if (/政府|委员会|办事处|派出所|停车场|收费站|公交站|地铁站|道路|路口|出入口|住宅|小区|写字楼|公司|银行|医院|学校|照相|摄影|婚纱|写真|证件照|儿童摄影|汉服体验|旅拍/.test(text)) return false;
+  if (/地名地址信息|道路附属设施|交通设施服务|政府机构|公司企业|商务住宅|生活服务;摄影冲印店/.test(text)) return false;
+  return /餐饮|购物|商场|娱乐|体育休闲|影剧院|风景名胜|科教文化|咖啡|茶艺|甜品|美术馆|博物馆|书店|公园|生活服务/.test(text);
+}
+function poiFromAmap(item, index, keyword, requirements) {
+  if (!item.name) return null;
+  const [lng, lat] = parseLocation(item.location);
+  const type = inferPoiType(item, keyword);
+  const price = simulatePrice(type);
+  const area = item.adname || extractDistrict(requirements.rawText) || requirements.city || "\u6DF1\u5733";
+  return {
+    id: `live_route_${item.id || `${Date.now()}_${index}`}`,
+    name: item.name,
+    type,
+    subType: inferSubType(item, type),
+    address: Array.isArray(item.address) ? item.address.join("") : item.address,
+    area,
+    businessDistrict: normalizeBusinessArea(item.business_area, area),
+    routeCluster: `live:${area}`,
+    price,
+    meituanRating: 4.5,
+    reviewCount: 800 + index * 137,
+    tags: buildTags(type, keyword, requirements),
+    limits: buildLimits(type, keyword),
+    fitPeople: ["\u5355\u4EBA", "\u60C5\u4FA3", "\u670B\u53CB", "\u4EB2\u5B50"],
+    stayMinutes: simulateStayMinutes(type),
+    queueLevel: index % 4 === 0 ? "medium" : "low",
+    distanceLevel: "3-10km",
+    mockMeituanUrl: `mock://amap/${item.id || index}`,
+    reason: `Agent \u6839\u636E\u300C${keyword}\u300D\u5B9E\u65F6\u68C0\u7D22\u5230\u8BE5\u5730\u70B9\uFF0C\u5E76\u6309\u300C${requirements.blindBoxTheme || "\u60CA\u559C\u76F2\u76D2"}\u300D\u98CE\u683C\u7EB3\u5165\u5019\u9009\u3002`,
+    blindBoxThemes: requirements.blindBoxTheme ? [requirements.blindBoxTheme] : void 0,
+    availableTools: ["amapPlaceSearch", "queueCheck", "availabilityCheck"],
+    bookingRequired: false,
+    weatherSensitive: !buildLimits(type, keyword).includes("\u5BA4\u5185"),
+    priorityScore: 78 - index,
+    lat,
+    lng
+  };
+}
+function inferPoiType(item, keyword) {
+  const text = `${item.type || ""} ${keyword} ${item.name || ""}`;
+  if (/咖啡|甜品|茶|奶茶|饮品|面包/.test(text)) return "\u8F7B\u98DF\u751C\u996E";
+  if (/餐饮|美食|饭|火锅|烧烤|餐厅|小吃/.test(text)) return "\u9910\u996E\u6B63\u9910";
+  if (/展|美术馆|博物馆|书店|文化|手作|手工|DIY|diy|陶艺/.test(text)) return "\u6587\u5316\u4F53\u9A8C";
+  if (/公园|步道|绿地|海滨|散步|citywalk/i.test(text)) return "\u6237\u5916\u6563\u6B65";
+  if (/娱乐|商场|乐园|电影|KTV|密室|桌游|电玩城|亲子/.test(text)) return "\u4F11\u95F2\u5A31\u4E50";
+  if (/拍照|打卡|地标|夜景|广场/.test(text)) return "\u62CD\u7167\u5730\u6807";
+  return "\u4F11\u95F2\u5A31\u4E50";
+}
+function inferSubType(item, type) {
+  const rawType = item.type?.split(";").at(-1);
+  return rawType || type;
+}
+function simulatePrice(type) {
+  if (type === "\u9910\u996E\u6B63\u9910") return 90;
+  if (type === "\u8F7B\u98DF\u751C\u996E") return 38;
+  if (type === "\u4F11\u95F2\u5A31\u4E50") return 80;
+  return 0;
+}
+function simulateStayMinutes(type) {
+  if (type === "\u9910\u996E\u6B63\u9910") return 80;
+  if (type === "\u8F7B\u98DF\u751C\u996E") return 45;
+  if (type === "\u6587\u5316\u4F53\u9A8C") return 90;
+  if (type === "\u4F11\u95F2\u5A31\u4E50") return 100;
+  return 70;
+}
+function buildTags(type, keyword, requirements) {
+  const tags = new Set(requirements.preferences.slice(0, 4));
+  if (type === "\u9910\u996E\u6B63\u9910") tags.add("\u7F8E\u98DF");
+  if (type === "\u8F7B\u98DF\u751C\u996E") tags.add(keyword.includes("\u5496\u5561") ? "\u5496\u5561" : "\u751C\u54C1");
+  if (type === "\u6587\u5316\u4F53\u9A8C") tags.add("\u6587\u5316");
+  if (type === "\u6237\u5916\u6563\u6B65") tags.add("\u6237\u5916");
+  if (type === "\u4F11\u95F2\u5A31\u4E50") tags.add("\u89E3\u538B");
+  if (/拍照|打卡/.test(keyword)) tags.add("\u62CD\u7167");
+  if (/小众/.test(keyword)) tags.add("\u5C0F\u4F17");
+  return [...tags].slice(0, 6);
+}
+function buildLimits(type, keyword) {
+  const limits = /* @__PURE__ */ new Set(["\u9884\u7B97\u53CB\u597D"]);
+  if (/室内|商场|展览|咖啡|娱乐|书店|美术馆|博物馆/.test(keyword) || ["\u9910\u996E\u6B63\u9910", "\u8F7B\u98DF\u751C\u996E", "\u6587\u5316\u4F53\u9A8C", "\u4F11\u95F2\u5A31\u4E50"].includes(type)) {
+    limits.add("\u5BA4\u5185");
+    limits.add("\u96E8\u5929\u53EF\u53BB");
+  } else {
+    limits.add("\u5BA4\u5916");
+  }
+  return [...limits];
+}
+function parseLocation(location) {
+  const [lngText, latText] = (location || "").split(",");
+  const lng = Number(lngText);
+  const lat = Number(latText);
+  return [Number.isFinite(lng) ? lng : void 0, Number.isFinite(lat) ? lat : void 0];
+}
+function normalizeBusinessArea(value, area) {
+  if (!value || value === "[]") return area;
+  return value;
+}
+function extractDistrict(text) {
+  const district = SHENZHEN_DISTRICTS.find((name) => text.includes(name));
+  return district ? `${district}\u533A` : void 0;
+}
+function uniquePois(pois2) {
+  const seen = /* @__PURE__ */ new Set();
+  return pois2.filter((poi) => {
+    const key = poi.name.trim().toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+async function withTimeout(promise, timeoutMs) {
+  let timeout;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 // new-agent-a-module/src/planner/llmReplanPlanner.ts
-var DEFAULT_MODEL = "deepseek-chat";
-var DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
+var DEFAULT_MODEL2 = "deepseek-chat";
+var DEFAULT_BASE_URL2 = "https://api.deepseek.com/v1";
 async function replanRouteWithLLM(event, currentRoute, pois2, requirements, config = {}) {
   const targetStep = findTargetStep2(event, currentRoute);
   if (!targetStep) return null;
   if (event.preferredReplacement && !event.customPreference?.trim()) {
     return buildExactReplacementResult(event, currentRoute, pois2, requirements, targetStep);
   }
-  const apiKey = config.apiKey || getLlmApiKey();
+  const apiKey = config.apiKey || getLlmApiKey2();
   if (!apiKey) return null;
   const candidates = await buildCandidatePool(event, targetStep, currentRoute, pois2, requirements);
   if (candidates.length === 0) return null;
-  const baseUrl = config.baseUrl || getLlmBaseUrl();
-  const model = config.model || getLlmModel();
+  const baseUrl = config.baseUrl || getLlmBaseUrl2();
+  const model = config.model || getLlmModel2();
   const decision = await askModelForReplacement({
     apiKey,
     baseUrl,
@@ -694,14 +1267,14 @@ async function replanRouteWithLLM(event, currentRoute, pois2, requirements, conf
     message: `LLM \u5DF2\u6839\u636E\u5F53\u524D\u8DEF\u7EBF\u548C\u5019\u9009\u6C60\uFF0C\u5C06\u300C${targetStep.poi.name}\u300D\u66FF\u6362\u4E3A\u300C${replacement.name}\u300D\u3002`
   };
 }
-function getLlmApiKey() {
+function getLlmApiKey2() {
   return process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY;
 }
-function getLlmBaseUrl() {
-  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
+function getLlmBaseUrl2() {
+  return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL2;
 }
-function getLlmModel() {
-  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
+function getLlmModel2() {
+  return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL2;
 }
 async function askModelForReplacement({
   apiKey,
@@ -755,26 +1328,26 @@ async function askModelForReplacement({
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content;
   if (!content) return null;
-  const parsed = safeParseJson(content);
+  const parsed = safeParseJson2(content);
   if (!parsed || typeof parsed !== "object") return null;
   return parsed;
 }
 async function buildCandidatePool(event, targetStep, currentRoute, pois2, requirements) {
-  const usedIds = new Set(currentRoute.steps.map((step) => step.poi.id));
+  const usedIds2 = new Set(currentRoute.steps.map((step) => step.poi.id));
   const directIds = targetStep.poi.replaceableBy ?? [];
   const requestedTypes = getRequestedReplacementTypes2(event, targetStep.poi);
   const routeCluster = inferRouteCluster(currentRoute);
   const routeArea = inferRouteArea(currentRoute);
-  const requireIndoor = hasIndoorIntent(event, requirements);
-  const direct = pois2.filter((poi) => directIds.includes(poi.id) && !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
-  const sameType = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 80)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea)).filter((poi) => {
+  const requireIndoor = hasIndoorIntent2(event, requirements);
+  const direct = pois2.filter((poi) => directIds.includes(poi.id) && !usedIds2.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
+  const sameType = pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 80)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea)).filter((poi) => {
     if (targetStep.poi.routeCluster && poi.routeCluster) return poi.routeCluster === targetStep.poi.routeCluster;
     if (targetStep.poi.area && poi.area) return poi.area === targetStep.poi.area;
     return true;
   });
-  const broad = pois2.filter((poi) => !usedIds.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
+  const broad = pois2.filter((poi) => !usedIds2.has(poi.id)).filter((poi) => matchesRequestedType2(poi, requestedTypes)).filter((poi) => matchesIndoorIntent(poi, requireIndoor)).filter((poi) => poi.fitPeople.includes(requirements.peopleType)).filter((poi) => poi.price <= Math.max(requirements.budgetMax, targetStep.poi.price + 120)).filter((poi) => matchesRouteArea(poi, routeCluster, routeArea));
   const liveCandidates = event.customPreference?.trim() ? await searchLivePoiCandidates(event, targetStep, requirements) : [];
-  return uniquePois([...liveCandidates, ...direct, ...sameType, ...broad]).sort((a, b) => scoreCandidateLocality(b, routeCluster, routeArea) - scoreCandidateLocality(a, routeCluster, routeArea)).slice(0, 24);
+  return uniquePois2([...liveCandidates, ...direct, ...sameType, ...broad]).sort((a, b) => scoreCandidateLocality(b, routeCluster, routeArea) - scoreCandidateLocality(a, routeCluster, routeArea)).slice(0, 24);
 }
 async function searchLivePoiCandidates(event, targetStep, requirements) {
   const keyword = buildLiveSearchKeyword(event, targetStep, requirements);
@@ -791,22 +1364,31 @@ async function searchLivePoiCandidates(event, targetStep, requirements) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`AMap search failed: ${response.status}`);
     const data = await response.json();
-    if (data.status !== "1" || !Array.isArray(data.pois)) {
-      return buildFallbackLiveCandidates(event, targetStep, requirements);
-    }
-    const candidates = data.pois.map((item, index) => poiFromAmap(item, index, event, targetStep, requirements)).filter((poi) => Boolean(poi));
-    return candidates.length > 0 ? candidates : buildFallbackLiveCandidates(event, targetStep, requirements);
+    if (data.status !== "1" || !Array.isArray(data.pois)) return [];
+    const candidates = data.pois.filter((item) => isUsableAmapPoi2(item)).map((item, index) => poiFromAmap2(item, index, event, targetStep, requirements)).filter((poi) => Boolean(poi));
+    return candidates;
   } catch {
-    return buildFallbackLiveCandidates(event, targetStep, requirements);
+    return [];
   }
 }
 function buildLiveSearchKeyword(event, targetStep, requirements) {
   const prompt = event.customPreference?.trim();
-  if (prompt) return prompt;
+  const area = targetStep.poi.area || targetStep.poi.businessDistrict || requirements.city;
+  if (prompt && /拍照|打卡|出片/.test(prompt)) return `${area} \u62CD\u7167\u6253\u5361 \u827A\u672F\u7A7A\u95F4 \u5496\u5561 \u5546\u573A`;
+  if (prompt && /室内|下雨|雨天/.test(prompt)) return `${area} \u5BA4\u5185 \u5A31\u4E50 \u5546\u573A \u5C55\u89C8 \u5496\u5561`;
+  if (prompt && /diy|DIY|手工|手作|陶艺|银饰|烘焙|画画/.test(prompt)) return `${area} DIY\u624B\u5DE5 \u9676\u827A \u70D8\u7119`;
+  if (prompt) return `${area} ${prompt}`;
   const corePreference = requirements.preferences[0] || targetStep.poi.type;
-  return `${requirements.city}${corePreference}${targetStep.poi.type}`;
+  return `${area}${corePreference}${targetStep.poi.type}`;
 }
-function poiFromAmap(item, index, event, targetStep, requirements) {
+function isUsableAmapPoi2(item) {
+  const text = `${item.name || ""} ${item.type || ""}`;
+  if (!item.name) return false;
+  if (/政府|委员会|办事处|派出所|停车场|收费站|公交站|地铁站|道路|路口|出入口|住宅|小区|写字楼|公司|银行|医院|学校|照相|摄影|婚纱|写真|证件照|儿童摄影|汉服体验|旅拍/.test(text)) return false;
+  if (/地名地址信息|道路附属设施|交通设施服务|政府机构|公司企业|商务住宅|生活服务;摄影冲印店/.test(text)) return false;
+  return /餐饮|购物|商场|娱乐|体育休闲|影剧院|风景名胜|科教文化|咖啡|茶艺|甜品|美术馆|博物馆|书店|公园|生活服务/.test(text);
+}
+function poiFromAmap2(item, index, event, targetStep, requirements) {
   if (!item.name) return null;
   const [lngText, latText] = (item.location || "").split(",");
   const lng = Number(lngText);
@@ -815,7 +1397,7 @@ function poiFromAmap(item, index, event, targetStep, requirements) {
   return {
     id: `live_amap_${item.id || index}`,
     name: item.name,
-    type: inferPoiType(event, targetStep),
+    type: inferPoiType2(event, targetStep),
     subType: item.type?.split(";").at(-1) || targetStep.poi.subType || "\u5B9E\u65F6\u63A8\u8350",
     address: Array.isArray(item.address) ? item.address.join("") : item.address,
     area: item.adname || targetStep.poi.area || requirements.city,
@@ -871,7 +1453,7 @@ function getRequestedReplacementTypes2(event, targetPoi) {
 function matchesRequestedType2(poi, requestedTypes) {
   return requestedTypes.length === 0 || requestedTypes.includes(poi.type);
 }
-function hasIndoorIntent(event, requirements) {
+function hasIndoorIntent2(event, requirements) {
   const text = [
     event.customPreference,
     event.message,
@@ -917,38 +1499,7 @@ function scoreCandidateLocality(poi, routeCluster, routeArea) {
 function inferRouteClusterFromPoi(poi) {
   return poi.routeCluster || poi.businessDistrict || poi.area;
 }
-function buildFallbackLiveCandidates(event, targetStep, requirements) {
-  const baseNames = [
-    `${requirements.city}${event.customPreference || requirements.preferences[0] || "\u5468\u672B"}\u7075\u611F\u70B9`,
-    `${targetStep.poi.businessDistrict || requirements.city}\u9644\u8FD1\u65B0\u53D1\u73B0`,
-    `${requirements.city}\u4E0D\u6392\u961F\u8F7B\u4F53\u9A8C`
-  ];
-  return baseNames.map((name, index) => ({
-    id: `live_fallback_${Date.now()}_${index}`,
-    name,
-    type: inferPoiType(event, targetStep),
-    subType: targetStep.poi.subType || "\u5B9E\u65F6\u5019\u9009",
-    area: targetStep.poi.area || requirements.city,
-    businessDistrict: targetStep.poi.businessDistrict || requirements.city,
-    routeCluster: targetStep.poi.routeCluster,
-    price: Math.min(Math.max(30, targetStep.poi.price || 60), requirements.budgetMax),
-    meituanRating: 4.5 + index * 0.1,
-    reviewCount: 600 + index * 180,
-    tags: inferLiveTags(event, targetStep, requirements),
-    limits: ["\u5B9E\u65F6\u5019\u9009", "\u4F4E\u6392\u961F"],
-    fitPeople: [requirements.peopleType],
-    stayMinutes: targetStep.poi.stayMinutes,
-    queueLevel: "low",
-    distanceLevel: targetStep.poi.distanceLevel || "3-10km",
-    reason: `Agent \u6839\u636E\u4F60\u7684\u8865\u5145\u8981\u6C42\u751F\u6210\u7684\u5B9E\u65F6\u5907\u9009\u70B9\uFF0C\u7528\u4E8E\u5728\u672C\u5730 POI \u4E0D\u8DB3\u65F6\u7EE7\u7EED\u5B8C\u6210\u8DEF\u7EBF\u5FAE\u8C03\u3002`,
-    blindBoxThemes: targetStep.poi.blindBoxThemes,
-    availableTools: ["liveCandidateSearch", "queueCheck", "availabilityCheck"],
-    bookingRequired: false,
-    weatherSensitive: false,
-    priorityScore: 82 - index
-  }));
-}
-function inferPoiType(event, targetStep) {
+function inferPoiType2(event, targetStep) {
   const text = event.customPreference || "";
   if (/咖啡|奶茶|甜|饮|茶/.test(text)) return "\u8F7B\u98DF\u751C\u996E";
   if (/吃|饭|餐|火锅|烧烤|菜/.test(text)) return "\u9910\u996E\u6B63\u9910";
@@ -1145,7 +1696,7 @@ function summarizePoi(poi) {
     weatherSensitive: poi.weatherSensitive
   };
 }
-function uniquePois(pois2) {
+function uniquePois2(pois2) {
   const seen = /* @__PURE__ */ new Set();
   return pois2.filter((poi) => {
     if (seen.has(poi.id)) return false;
@@ -1153,7 +1704,7 @@ function uniquePois(pois2) {
     return true;
   });
 }
-function safeParseJson(content) {
+function safeParseJson2(content) {
   try {
     return JSON.parse(content);
   } catch {
@@ -1197,6 +1748,9 @@ async function checkQueue(route) {
 // new-agent-a-module/src/agent/orchestrator.ts
 async function handleReplan(event, currentPlan, options = {}) {
   const pois2 = options.pois ?? mockPois;
+  if (event.type === "reroll") {
+    return handleReroll(event, currentPlan, pois2);
+  }
   let planB = null;
   try {
     planB = await replanRouteWithLLM(event, currentPlan.route, pois2, currentPlan.requirements, options.llm);
@@ -1224,6 +1778,95 @@ async function handleReplan(event, currentPlan, options = {}) {
     toolStatus,
     executionTasks: [],
     planB
+  };
+}
+async function handleReroll(event, currentPlan, pois2) {
+  const requirements = await refineRerollRequirements(event, currentPlan);
+  const theme = selectBlindBoxTheme(requirements);
+  const liveResult = await buildLiveRoute(requirements, theme, {
+    excludeIds: currentPlan.route.steps.map((step) => step.poi.id),
+    timeoutMs: 8e3
+  });
+  const route = liveResult?.route ?? rerollRoute(requirements, currentPlan.route, pois2, theme);
+  const [queueResults, availabilityResults] = await Promise.all([
+    checkQueue(route),
+    checkAvailability(route)
+  ]);
+  const toolStatus = [
+    buildLiveRouteToolStatus(liveResult, requirements.blindBoxTheme),
+    ...queueResults,
+    ...availabilityResults
+  ];
+  const blindBox = composeBlindBox(theme, route, requirements, toolStatus);
+  const planB = buildRerollResult(event, currentPlan, route, requirements);
+  return {
+    ...currentPlan,
+    requirements,
+    blindBox,
+    route,
+    toolStatus,
+    executionTasks: [],
+    planB
+  };
+}
+function buildLiveRouteToolStatus(liveResult, selectedTheme) {
+  return {
+    toolName: "amapLiveRouteSearch",
+    status: liveResult ? "success" : "failed",
+    message: liveResult ? `\u5DF2\u6309${selectedTheme || "\u76F2\u76D2\u98CE\u683C"}\u5B9E\u65F6\u68C0\u7D22 ${liveResult.candidates.length} \u4E2A\u6DF1\u5733\u5019\u9009\u70B9\u3002` : "\u5B9E\u65F6\u5730\u70B9\u68C0\u7D22\u8D85\u65F6\u6216\u5019\u9009\u4E0D\u8DB3\uFF0C\u5DF2\u542F\u7528\u672C\u5730 Mock POI \u4FDD\u5E95\u3002",
+    result: liveResult ? {
+      keywords: liveResult.keywords,
+      candidateCount: liveResult.candidates.length,
+      routeNames: liveResult.route.steps.map((step) => step.poi.name)
+    } : void 0
+  };
+}
+async function refineRerollRequirements(event, currentPlan) {
+  const previousNames = currentPlan.route.steps.map((step) => step.poi.name).join("\u3001");
+  const rerollText = [
+    currentPlan.requirements.rawText,
+    event.message,
+    event.customPreference,
+    previousNames ? `\u907F\u5F00\u5F53\u524D\u8DEF\u7EBF\u91CC\u7684\u8FD9\u4E9B\u5730\u70B9\uFF1A${previousNames}` : ""
+  ].filter(Boolean).join("\uFF1B");
+  try {
+    return await parseIntent({
+      rawText: rerollText,
+      quickSelections: {
+        city: currentPlan.requirements.city,
+        durationHours: currentPlan.requirements.durationHours,
+        budget: currentPlan.requirements.budgetMax,
+        peopleType: currentPlan.requirements.peopleType,
+        preferences: currentPlan.requirements.preferences,
+        constraints: currentPlan.requirements.constraints,
+        distanceLevel: currentPlan.requirements.distanceLevel,
+        blindBoxTheme: currentPlan.requirements.blindBoxTheme
+      }
+    });
+  } catch {
+    return currentPlan.requirements;
+  }
+}
+function buildRerollResult(event, currentPlan, afterRoute, requirements) {
+  const beforeNames = new Set(currentPlan.route.steps.map((step) => step.poi.name));
+  const changes = afterRoute.steps.map((step, index) => {
+    const beforeStep = currentPlan.route.steps[index];
+    return {
+      action: "replace",
+      from: beforeStep?.poi.name,
+      to: step.poi.name,
+      reason: beforeNames.has(step.poi.name) ? "\u8FD9\u4E00\u7AD9\u4E0E\u65B0\u8DEF\u7EBF\u4ECD\u7136\u5339\u914D\uFF0CAgent \u5728\u7A7A\u95F4\u987A\u5E8F\u4E2D\u4FDD\u7559\u3002" : "Agent \u5DF2\u907F\u5F00\u5F53\u524D\u8DEF\u7EBF\u6838\u5FC3\u70B9\uFF0C\u91CD\u65B0\u5339\u914D\u4E00\u6761\u65B0\u7684\u76F2\u76D2\u8DEF\u7EBF\u3002"
+    };
+  });
+  return {
+    event,
+    impact: "\u4F60\u9009\u62E9\u91CD\u65B0\u66F4\u6362\u6574\u6761\u8DEF\u7EBF\uFF0CAgent \u5DF2\u91CD\u65B0\u7406\u89E3\u9700\u6C42\u5E76\u91CD\u5F00\u5468\u672B\u76F2\u76D2\u3002",
+    beforeRoute: currentPlan.route,
+    afterRoute,
+    changes,
+    keptPreferences: requirements.preferences.slice(0, 3),
+    sacrificed: currentPlan.route.steps.map((step) => step.poi.name).filter((name) => !afterRoute.steps.some((afterStep) => afterStep.poi.name === name)),
+    message: `\u5DF2\u57FA\u4E8E\u300C${requirements.preferences.slice(0, 2).join("\u3001") || "\u5F53\u524D\u504F\u597D"}\u300D\u91CD\u65B0\u751F\u6210\u5B8C\u6574\u8DEF\u7EBF\uFF0C\u5E76\u5C3D\u91CF\u907F\u5F00\u4E0A\u4E00\u6761\u8DEF\u7EBF\u7684\u6838\u5FC3\u8282\u70B9\u3002`
   };
 }
 

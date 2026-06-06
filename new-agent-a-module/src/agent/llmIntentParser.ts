@@ -35,6 +35,7 @@ export async function parseIntentWithLLM(userInput: UserInput): Promise<Requirem
             "你是本地生活周末出游 Agent 的意图解析器。",
             "请把用户的一句话目标解析为严格 JSON，不要输出解释。",
             "字段必须包含：city, durationHours, budgetMax, distanceLevel, peopleType, preferences, constraints, timeText。",
+            "如果 quickSelections.blindBoxTheme 存在，请不要改写它；这个字段代表用户明确选择的盲盒路线风格。",
             "peopleType 只能是：单人、情侣、朋友、亲子。",
             "preferences 和 constraints 必须是字符串数组。",
             "请优先根据用户原话做语义判断，不要机械套用默认值。",
