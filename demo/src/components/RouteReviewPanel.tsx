@@ -63,24 +63,44 @@ function getReplacementCandidates(step: RouteStep): ReplacementCandidate[] {
   ];
 }
 
-function StepGuide() {
-  const steps = ['点选路线节点', '查看推荐替代', '确认更新路线'];
+function scrollToTuningSection(id: string) {
+  const target = document.getElementById(id) ?? document.getElementById('node-selection-panel');
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function StepGuide({ onJump }: { onJump: (targetId: string) => void }) {
+  const steps = [
+    { label: '点选路线节点', desc: '下面点“选择要替换的节点”后操作', targetId: 'node-selection-panel' },
+    { label: '查看推荐替代', desc: '选中节点后才会出现替代方向', targetId: 'replacement-options-card' },
+    { label: '确认更新路线', desc: '最后由底部确认按钮提交替换', targetId: 'replacement-options-card' },
+  ];
 
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      {steps.map((label, index) => (
-        <div key={label} className="rounded-2xl border border-purple-100 bg-white/66 p-4 shadow-sm">
+    <div>
+      <div className="mb-3 rounded-2xl border border-purple-100 bg-white/62 px-4 py-3 text-xs font-bold leading-5 text-purple-600">
+        这里的 1、2、3 是微调流程说明，不是三个独立选项；点击步骤会跳到当前页面里对应的操作位置。
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+      {steps.map((step, index) => (
+        <button
+          key={step.label}
+          type="button"
+          onClick={() => onJump(step.targetId)}
+          className="rounded-2xl border border-purple-100 bg-white/66 p-4 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-purple-300 hover:bg-purple-50/80"
+        >
           <span className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-100 text-sm font-extrabold text-purple-700">
             {index + 1}
           </span>
-          <p className="mt-3 text-sm font-extrabold text-purple-950">{label}</p>
-        </div>
+          <p className="mt-3 text-sm font-extrabold text-purple-950">{step.label}</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-purple-500">{step.desc}</p>
+        </button>
       ))}
+      </div>
     </div>
   );
 }
 
-function EmptyTuningState({ onStart }: { onStart: () => void }) {
+function EmptyTuningState({ onStart }: { onStart: (targetId?: string) => void }) {
   return (
     <section className="animate-fade-in rounded-[2rem] border border-white/58 bg-gradient-to-br from-white/78 via-purple-50/60 to-amber-50/72 p-5 shadow-[0_22px_70px_rgba(91,33,182,0.14)] backdrop-blur-2xl sm:p-6">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-center">
@@ -109,14 +129,14 @@ function EmptyTuningState({ onStart }: { onStart: () => void }) {
       </div>
 
       <div className="mt-6">
-        <StepGuide />
+        <StepGuide onJump={onStart} />
       </div>
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs font-bold text-purple-500">先选择一站，Buddy 会只替换这一个节点。</p>
         <button
           type="button"
-          onClick={onStart}
+          onClick={() => onStart('node-selection-panel')}
           className="inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-purple-600 via-purple-700 to-purple-900 px-6 py-3 text-sm font-extrabold text-white shadow-[0_14px_30px_rgba(124,58,237,0.3)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_38px_rgba(124,58,237,0.4)]"
         >
           选择要替换的节点
@@ -147,7 +167,7 @@ function NodeSelectionPanel({
   onCancel: () => void;
 }) {
   return (
-    <section className="animate-fade-in rounded-[2rem] border border-white/58 bg-gradient-to-br from-white/80 via-purple-50/58 to-amber-50/72 p-5 shadow-[0_22px_70px_rgba(91,33,182,0.14)] backdrop-blur-2xl sm:p-6">
+    <section id="node-selection-panel" className="scroll-mt-24 animate-fade-in rounded-[2rem] border border-white/58 bg-gradient-to-br from-white/80 via-purple-50/58 to-amber-50/72 p-5 shadow-[0_22px_70px_rgba(91,33,182,0.14)] backdrop-blur-2xl sm:p-6">
       <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div>
           <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-600">Node tuning</p>
@@ -257,7 +277,7 @@ function ReplacementOptionsCard({
   const hasCustomPrompt = customPrompt.trim().length > 0;
 
   return (
-    <section className="animate-fade-in rounded-[2rem] border border-amber-200/80 bg-gradient-to-br from-amber-50/88 via-white/78 to-purple-50/60 p-5 shadow-[0_22px_70px_rgba(217,119,6,0.13)] backdrop-blur-2xl sm:p-6">
+    <section id="replacement-options-card" className="scroll-mt-24 animate-fade-in rounded-[2rem] border border-amber-200/80 bg-gradient-to-br from-amber-50/88 via-white/78 to-purple-50/60 p-5 shadow-[0_22px_70px_rgba(217,119,6,0.13)] backdrop-blur-2xl sm:p-6">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
         <div>
           <p className="text-xs font-extrabold uppercase tracking-[0.18em] text-amber-600">Replacement options</p>
@@ -525,7 +545,12 @@ export default function RouteReviewPanel({
       </section>
 
       {mode === 'idle' && !latestChange && !noReplacementFound && (
-        <EmptyTuningState onStart={() => setMode('node')} />
+        <EmptyTuningState
+          onStart={(targetId = 'node-selection-panel') => {
+            setMode('node');
+            window.setTimeout(() => scrollToTuningSection(targetId), 80);
+          }}
+        />
       )}
 
       {mode === 'route' && (

@@ -344,9 +344,9 @@ export default function App() {
           </section>
         )}
 
-        {step === 'executed' && plan?.executionTasks && (
+        {step === 'executed' && plan && (
           <section className="mx-auto max-w-3xl animate-slide-up">
-            <ExecutionPanel tasks={plan.executionTasks} />
+            <ExecutionPanel tasks={plan.executionTasks ?? []} route={plan.route} />
           </section>
         )}
 
