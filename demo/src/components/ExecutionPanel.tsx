@@ -216,15 +216,15 @@ function JourneyMapCard({ route }: { route: Route }) {
 }
 
 function buildMarkerUrl(step: Route['steps'][number]) {
-  const { lng, lat, name } = step.poi;
-  return `https://uri.amap.com/marker?position=${lng},${lat}&name=${encodeURIComponent(name)}&coordinate=gaode&src=weekendbuddy`;
+  const query = encodeURIComponent(`${step.poi.name} ${step.poi.businessDistrict ?? ''}`.trim());
+  return `https://ditu.amap.com/search?query=${query}&city=深圳`;
 }
 
 function buildNavigationUrl(from: Route['steps'][number], to: Route['steps'][number]) {
   if (!from.poi.lng || !from.poi.lat || !to.poi.lng || !to.poi.lat) return null;
   const fromName = encodeURIComponent(from.poi.name);
   const toName = encodeURIComponent(to.poi.name);
-  return `https://uri.amap.com/navigation?from=${from.poi.lng},${from.poi.lat},${fromName}&to=${to.poi.lng},${to.poi.lat},${toName}&mode=walk&policy=1&coordinate=gaode&src=weekendbuddy`;
+  return `https://ditu.amap.com/dir?from%5Blnglat%5D=${from.poi.lng}%2C${from.poi.lat}&from%5Bname%5D=${fromName}&to%5Blnglat%5D=${to.poi.lng}%2C${to.poi.lat}&to%5Bname%5D=${toName}&type=walk&policy=1`;
 }
 
 function ReservationAssistCard({ task }: { task: ToolResult }) {
