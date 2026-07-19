@@ -17,14 +17,14 @@ var __copyProps = (to, from, except, desc) => {
 };
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// api-src/execute-plan.ts
+// ../api-src/execute-plan.ts
 var execute_plan_exports = {};
 __export(execute_plan_exports, {
   default: () => handler
 });
 module.exports = __toCommonJS(execute_plan_exports);
 
-// new-agent-a-module/src/tools/reserveOrJoinPlan.ts
+// ../new-agent-a-module/src/tools/reserveOrJoinPlan.ts
 async function reserveOrJoinPlan(route) {
   return route.steps.map((step) => {
     const reservation = buildReservationAssist(step);
@@ -43,11 +43,11 @@ async function reserveOrJoinPlan(route) {
           actions: {
             copyScript: false,
             callPhone: false,
-            openMeituan: Boolean(step.poi.mockMeituanUrl)
+            openMeituan: false
           },
           phone: step.poi.phone ?? null,
-          meituanUrl: step.poi.mockMeituanUrl ?? null,
-          disclaimer: "Agent \u5DF2\u5224\u65AD\u8BE5\u6B63\u9910\u8282\u70B9\u5F53\u524D\u4E0D\u9700\u8981\u63D0\u524D\u9884\u8BA2\uFF0C\u4ECD\u4F1A\u4FDD\u7559\u7F8E\u56E2\u5165\u53E3\u4F9B\u7528\u6237\u67E5\u770B\u3002"
+          meituanUrl: null,
+          disclaimer: "Agent \u5DF2\u5224\u65AD\u8BE5\u6B63\u9910\u8282\u70B9\u5F53\u524D\u4E0D\u9700\u8981\u63D0\u524D\u9884\u8BA2\uFF0C\u56E0\u6B64\u4E0D\u63D0\u4F9B\u6A21\u62DF\u9884\u8BA2\u5165\u53E3\u3002"
         }
       };
     }
@@ -123,7 +123,7 @@ function estimateVisitTimeText(step) {
   return "\u5230\u8FBE\u524D";
 }
 
-// new-agent-a-module/src/agent/orchestrator.ts
+// ../new-agent-a-module/src/agent/orchestrator.ts
 async function executePlan(plan) {
   const executionTasks = await reserveOrJoinPlan(plan.route);
   return {
@@ -132,7 +132,7 @@ async function executePlan(plan) {
   };
 }
 
-// api-src/execute-plan.ts
+// ../api-src/execute-plan.ts
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");

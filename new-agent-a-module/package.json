@@ -6,6 +6,10 @@
   "scripts": {
     "demo:agent": "node --experimental-strip-types src/demo/runAgentDemo.ts",
     "demo:provided-pois": "node --experimental-strip-types src/demo/runProvidedPoisDemo.ts",
-    "check:pois": "node --experimental-strip-types src/demo/checkPoisData.ts"
+    "check:pois": "node --experimental-strip-types src/demo/checkPoisData.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }

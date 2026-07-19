@@ -45,7 +45,10 @@ function normalizePoi(raw: RawPoi): Poi {
       ? raw.weatherSensitive
       : limits.includes("室外") && !limits.includes("雨天可去"),
     replaceableBy: asStringArray(raw.replaceableBy),
-    priorityScore: optionalNumber(raw.priorityScore)
+    priorityScore: optionalNumber(raw.priorityScore),
+    amapCategoryName: optionalString(raw.amapCategoryName),
+    amapCategoryCode: optionalString(raw.amapCategoryCode),
+    amapCategoryPath: optionalString(raw.amapCategoryPath)
   };
 }
 

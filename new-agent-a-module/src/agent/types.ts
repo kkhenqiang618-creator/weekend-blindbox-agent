@@ -11,15 +11,40 @@ export interface UserInput {
     peopleType?: PeopleType;
     preferences?: string[];
     constraints?: string[];
+    province?: string;
     city?: string;
+    district?: string;
     durationHours?: number;
     distanceLevel?: string;
     blindBoxTheme?: string;
+    allowCrossDistrict?: boolean;
+    currentLocation?: {
+      lng: number;
+      lat: number;
+    };
+    inputMode?: "selection" | "natural";
+    userProfile?: UserPreferenceProfile;
   };
+}
+
+export interface UserPreferenceProfile {
+  likedPoiTypes?: string[];
+  likedTags?: string[];
+  likedDistricts?: string[];
+  favoritePoiNames?: string[];
+  favoriteRouteThemes?: string[];
+  dislikedPoiTypes?: string[];
+  rejectedKeywords?: string[];
+  budgetRange?: [number, number];
+  preferredRoutePace?: "relaxed" | "balanced" | "packed";
+  confirmedRouteCount?: number;
+  favoritePoiCount?: number;
+  favoriteRouteCount?: number;
 }
 
 export interface Requirements {
   city: string;
+  district?: string;
   durationHours: number;
   budgetMax: number;
   distanceLevel?: string;
@@ -28,7 +53,14 @@ export interface Requirements {
   constraints: string[];
   timeText: string;
   rawText: string;
+  inputMode: "selection" | "natural";
   blindBoxTheme?: string;
+  allowCrossDistrict?: boolean;
+  currentLocation?: {
+    lng: number;
+    lat: number;
+  };
+  userProfile?: UserPreferenceProfile;
   intentSource?: "llm" | "rules";
   intentFallbackReason?: string;
 }
@@ -45,6 +77,7 @@ export interface Poi {
   price: number;
   priceLevel?: string;
   meituanRating?: number;
+  ratingSource?: "amap" | "weekendbuddy";
   reviewCount?: number;
   tags: string[];
   limits: string[];
@@ -55,6 +88,8 @@ export interface Poi {
   distanceLevel?: string;
   mockMeituanUrl?: string;
   phone?: string;
+  photoUrl?: string;
+  photoUrls?: string[];
   reason: string;
   blindBoxThemes?: string[];
   availableTools?: string[];
@@ -64,6 +99,16 @@ export interface Poi {
   priorityScore?: number;
   lat?: number;
   lng?: number;
+  source?: "amap" | "local" | "manual";
+  amapCategoryName?: string;
+  amapCategoryCode?: string;
+  amapCategoryPath?: string;
+  venueKey?: string;
+  brandKey?: string;
+  categoryKey?: string;
+  qualityTags?: string[];
+  qualityScore?: number;
+  qualityWarnings?: string[];
 }
 
 export interface RouteStep {
@@ -72,12 +117,35 @@ export interface RouteStep {
   poi: Poi;
   startTimeText?: string;
   note: string;
+  templateRole?: string;
+  isAnchor?: boolean;
+  roleReason?: string;
+}
+
+export type RouteQualityIssueSeverity = "fatal" | "warning" | "info";
+export type RouteQualityIssueMetaValue = string | number | boolean;
+
+export interface RouteQualityIssue {
+  code: string;
+  severity: RouteQualityIssueSeverity;
+  message: string;
+  poiIds?: string[];
+  role?: string;
+  meta?: Record<string, RouteQualityIssueMetaValue>;
 }
 
 export interface Route {
   totalMinutes: number;
   totalBudget: number;
   steps: RouteStep[];
+  recommendationReasons?: string[];
+  personalizationSummary?: string;
+  templateId?: string;
+  templateName?: string;
+  qualityScore?: number;
+  warnings?: string[];
+  debugReasons?: string[];
+  qualityIssues?: RouteQualityIssue[];
 }
 
 export interface BlindBox {
@@ -86,6 +154,7 @@ export interface BlindBox {
   tags: string[];
   story: string;
   unlockText: string;
+  copySource?: "system" | "llm" | "unavailable";
 }
 
 export interface ToolResult {
@@ -130,6 +199,7 @@ export interface LlmReplanConfig {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  intentModel?: string;
 }
 
 export interface PlanBChange {

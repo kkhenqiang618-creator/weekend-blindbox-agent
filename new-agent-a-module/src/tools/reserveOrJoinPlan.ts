@@ -19,11 +19,11 @@ export async function reserveOrJoinPlan(route: Route): Promise<ToolResult[]> {
           actions: {
             copyScript: false,
             callPhone: false,
-            openMeituan: Boolean(step.poi.mockMeituanUrl)
+            openMeituan: false
           },
           phone: step.poi.phone ?? null,
-          meituanUrl: step.poi.mockMeituanUrl ?? null,
-          disclaimer: "Agent 已判断该正餐节点当前不需要提前预订，仍会保留美团入口供用户查看。"
+          meituanUrl: null,
+          disclaimer: "Agent 已判断该正餐节点当前不需要提前预订，因此不提供模拟预订入口。"
         }
       };
     }

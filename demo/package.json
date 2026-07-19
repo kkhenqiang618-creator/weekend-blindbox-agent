@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "build:api": "esbuild ../api-src/*.ts --bundle --platform=node --format=cjs --outdir=../api",
+    "prebuild": "npm run build:api",
     "build": "vite build",
+    "test": "node --experimental-strip-types --test --test-concurrency=1 tests/*.test.ts",
     "preview": "vite preview",
     "server": "node --experimental-strip-types server.mjs",
     "start": "node --experimental-strip-types server.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -19,6 +23,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "esbuild": "^0.25.12",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.6.3",

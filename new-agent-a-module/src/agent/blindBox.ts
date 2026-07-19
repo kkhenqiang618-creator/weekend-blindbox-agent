@@ -58,18 +58,29 @@ export function composeBlindBox(
   toolResults: ToolResult[]
 ): BlindBox {
   const rule = THEME_RULES.find((item) => item.theme === theme);
-  const routeNames = route.steps.map((step) => step.poi.name).join(" -> ");
   const hasQueueSafe = toolResults.some((result) => /排队|高排队/.test(result.message));
   const title = `${requirements.timeText}${theme}`;
+  const firstName = route.steps[0]?.poi.name || "第一站";
+  const lastName = route.steps.at(-1)?.poi.name || "收尾站";
+  const selectionStories = [
+    `这次随机开出「${theme}」：从${firstName}出发，到${lastName}收尾，中间少走回头路。`,
+    `本次盲盒落在「${theme}」，${route.steps.length} 站从${firstName}一路串到${lastName}。`,
+    `本次开出「${theme}」：先去${firstName}，最后在${lastName}结束这趟周末路线。`,
+    `随机组合完成：${firstName}负责开场，${lastName}负责收尾，共安排 ${route.steps.length} 站。`,
+  ];
+  const selectionStory = selectionStories[Math.floor(Math.random() * selectionStories.length)];
 
   return {
     theme,
     title,
     tags: rule?.tags ?? requirements.preferences.slice(0, 3),
-    story: `${rule?.storyPrefix ?? "根据你的目标生成一条半日路线。"}本次路线为：${routeNames}。`,
+    story: requirements.inputMode === "natural"
+      ? "正在根据你的原话和本次路线生成个性化反馈。"
+      : `${selectionStory}${rule?.storyPrefix ?? ""}`,
     unlockText: hasQueueSafe
       ? "已检查排队风险，并准备可替换节点。"
-      : "已匹配主题、时间和预算，可以解锁路线。"
+      : "已完成本次随机匹配，可以解锁路线。",
+    copySource: "system",
   };
 }
 

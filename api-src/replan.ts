@@ -25,11 +25,13 @@ function sanitizeLlmConfig(config: unknown) {
   const apiKey = typeof candidate.apiKey === "string" ? candidate.apiKey.trim() : "";
   const baseUrl = typeof candidate.baseUrl === "string" ? candidate.baseUrl.trim() : "";
   const model = typeof candidate.model === "string" ? candidate.model.trim() : "";
-  if (!apiKey && !baseUrl && !model) return undefined;
+  const intentModel = typeof candidate.intentModel === "string" ? candidate.intentModel.trim() : "";
+  if (!apiKey && !baseUrl && !model && !intentModel) return undefined;
   return {
     apiKey: apiKey || undefined,
     baseUrl: baseUrl || undefined,
     model: model || undefined,
+    intentModel: intentModel || undefined,
   };
 }
 

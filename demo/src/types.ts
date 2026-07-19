@@ -6,6 +6,7 @@ export interface BlindBox {
   tags: string[];
   story: string;
   unlockText: string;
+  copySource?: 'system' | 'llm' | 'unavailable';
 }
 
 export interface Poi {
@@ -20,6 +21,7 @@ export interface Poi {
   price: number;
   priceLevel?: string;
   meituanRating?: number;
+  ratingSource?: 'amap' | 'weekendbuddy';
   reviewCount?: number;
   tags: string[];
   limits: string[];
@@ -30,8 +32,20 @@ export interface Poi {
   distanceLevel?: string;
   reason: string;
   weatherSensitive?: boolean;
+  photoUrl?: string;
+  photoUrls?: string[];
   lat?: number;
   lng?: number;
+  source?: 'amap' | 'local' | 'manual';
+  amapCategoryName?: string;
+  amapCategoryCode?: string;
+  amapCategoryPath?: string;
+  venueKey?: string;
+  brandKey?: string;
+  categoryKey?: string;
+  qualityTags?: string[];
+  qualityScore?: number;
+  qualityWarnings?: string[];
 }
 
 export interface RouteStep {
@@ -40,12 +54,35 @@ export interface RouteStep {
   poi: Poi;
   startTimeText?: string;
   note: string;
+  templateRole?: string;
+  isAnchor?: boolean;
+  roleReason?: string;
+}
+
+export type RouteQualityIssueSeverity = 'fatal' | 'warning' | 'info';
+export type RouteQualityIssueMetaValue = string | number | boolean;
+
+export interface RouteQualityIssue {
+  code: string;
+  severity: RouteQualityIssueSeverity;
+  message: string;
+  poiIds?: string[];
+  role?: string;
+  meta?: Record<string, RouteQualityIssueMetaValue>;
 }
 
 export interface Route {
   totalMinutes: number;
   totalBudget: number;
   steps: RouteStep[];
+  recommendationReasons?: string[];
+  personalizationSummary?: string;
+  templateId?: string;
+  templateName?: string;
+  qualityScore?: number;
+  warnings?: string[];
+  debugReasons?: string[];
+  qualityIssues?: RouteQualityIssue[];
 }
 
 export interface ToolResult {
@@ -94,6 +131,7 @@ export interface PlanBResult {
 
 export interface Requirements {
   city: string;
+  district?: string;
   durationHours: number;
   budgetMax: number;
   peopleType: string;
@@ -101,9 +139,18 @@ export interface Requirements {
   constraints: string[];
   timeText: string;
   rawText?: string;
+  inputMode?: 'selection' | 'natural';
   blindBoxTheme?: string;
+  allowCrossDistrict?: boolean;
+  currentLocation?: {
+    lng: number;
+    lat: number;
+  };
+  userProfile?: UserPreferenceProfile;
   parseMethod: string;
   fallbackReason?: string;
+  intentSource?: 'llm' | 'rules';
+  intentFallbackReason?: string;
 }
 
 export interface Plan {
@@ -120,10 +167,26 @@ export interface UserInput {
   quickSelections: Record<string, unknown>;
 }
 
+export interface UserPreferenceProfile {
+  likedPoiTypes?: string[];
+  likedTags?: string[];
+  likedDistricts?: string[];
+  favoritePoiNames?: string[];
+  favoriteRouteThemes?: string[];
+  dislikedPoiTypes?: string[];
+  rejectedKeywords?: string[];
+  budgetRange?: [number, number];
+  preferredRoutePace?: 'relaxed' | 'balanced' | 'packed';
+  confirmedRouteCount?: number;
+  favoritePoiCount?: number;
+  favoriteRouteCount?: number;
+}
+
 export interface LlmReplanConfig {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
+  intentModel?: string;
 }
 
-export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'review' | 'executed' | 'planb';
+export type AppStep = 'input' | 'loading' | 'unboxing' | 'plan' | 'review' | 'executed' | 'planb' | 'custom-route';

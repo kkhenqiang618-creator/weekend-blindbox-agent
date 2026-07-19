@@ -1,51 +1,81 @@
-import type { PeopleType, Requirements, UserInput } from "./types.ts";
+import type { PeopleType, Requirements, UserInput, UserPreferenceProfile } from "./types.ts";
 
-const DEFAULT_CITY = "深圳";
+const DEFAULT_CITY = "";
 const DEFAULT_DURATION_HOURS = 4;
 const DEFAULT_BUDGET_MAX = 300;
 const DEFAULT_PEOPLE_TYPE: PeopleType = "朋友";
 
-const KNOWN_CITIES = ["深圳", "上海", "北京", "广州", "杭州", "成都", "武汉", "南京"];
+const DISTRICT_SUFFIX_PATTERN = /[\u4e00-\u9fff]{2,6}?(?:区|县|旗)/;
+const COMMON_CITY_NAMES = [
+  "北京", "上海", "广州", "深圳", "杭州", "成都", "武汉", "南京",
+  "重庆", "天津", "苏州", "西安", "长沙", "青岛", "郑州", "大连",
+  "厦门", "福州", "合肥", "济南", "沈阳", "昆明", "贵阳", "南宁",
+  "海口", "三亚", "哈尔滨", "长春", "太原", "石家庄", "兰州", "乌鲁木齐",
+  "拉萨", "呼和浩特", "银川", "西宁", "南昌", "宁波", "无锡", "东莞",
+  "佛山", "珠海", "惠州", "温州", "绍兴", "嘉兴", "常州", "南通",
+] as const;
 
 export function parseIntentWithRules(userInput: UserInput): Requirements {
   const rawText = userInput.rawText || "";
   const quick = userInput.quickSelections ?? {};
+  const naturalMode = quick.inputMode !== "selection";
+  const explicitCity = extractCity(rawText);
+  const explicitDistrict = extractDistrict(rawText);
   const preferences = unique([
     ...extractPreferences(rawText),
-    ...(quick.preferences ?? [])
+    ...(quick.preferences ?? []),
+    ...extractProfilePreferences(quick.userProfile)
   ]);
   const constraints = unique([
     ...extractConstraints(rawText),
-    ...(quick.constraints ?? [])
+    ...(quick.constraints ?? []),
+    ...extractProfileConstraints(quick.userProfile)
   ]);
 
   return {
-    city: quick.city ?? extractCity(rawText) ?? DEFAULT_CITY,
+    city: naturalMode ? explicitCity ?? quick.city ?? DEFAULT_CITY : quick.city ?? explicitCity ?? DEFAULT_CITY,
+    district: naturalMode
+      ? explicitDistrict ?? normalizeDistrict(quick.district)
+      : normalizeDistrict(quick.district) ?? explicitDistrict,
     durationHours: quick.durationHours ?? extractDurationHours(rawText) ?? DEFAULT_DURATION_HOURS,
     budgetMax: normalizeBudget(quick.budget) ?? extractBudget(rawText) ?? DEFAULT_BUDGET_MAX,
-    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText),
+    distanceLevel: quick.distanceLevel ?? extractDistanceLevel(rawText) ?? undefined,
     peopleType: quick.peopleType ?? extractPeopleType(rawText) ?? DEFAULT_PEOPLE_TYPE,
     preferences: preferences.length > 0 ? preferences : ["美食", "休闲"],
     constraints,
     timeText: extractTimeText(rawText),
     rawText,
+    inputMode: quick.inputMode ?? (Object.keys(quick).length > 0 ? "selection" : "natural"),
     blindBoxTheme: normalizeTheme(quick.blindBoxTheme),
+    allowCrossDistrict: quick.allowCrossDistrict === true,
+    currentLocation: normalizeLocation(quick.currentLocation),
+    userProfile: normalizeUserProfile(quick.userProfile),
     intentSource: "rules"
   };
 }
 
 export function applyQuickSelections(requirements: Requirements, userInput: UserInput): Requirements {
   const quick = userInput.quickSelections ?? {};
+  const inputMode = quick.inputMode ?? requirements.inputMode;
+  const naturalMode = inputMode === "natural";
+  const quickDistrict = normalizeDistrict(quick.district);
   return {
     ...requirements,
-    city: quick.city ?? requirements.city,
+    city: naturalMode ? requirements.city || quick.city || DEFAULT_CITY : quick.city ?? requirements.city,
+    district: naturalMode ? requirements.district ?? quickDistrict : quickDistrict ?? requirements.district,
     durationHours: quick.durationHours ?? requirements.durationHours,
     budgetMax: normalizeBudget(quick.budget) ?? requirements.budgetMax,
     distanceLevel: quick.distanceLevel ?? requirements.distanceLevel,
     peopleType: quick.peopleType ?? requirements.peopleType,
     preferences: unique([...(requirements.preferences ?? []), ...(quick.preferences ?? [])]),
     constraints: unique([...(requirements.constraints ?? []), ...(quick.constraints ?? [])]),
-    blindBoxTheme: normalizeTheme(quick.blindBoxTheme) ?? requirements.blindBoxTheme
+    blindBoxTheme: normalizeTheme(quick.blindBoxTheme) ?? requirements.blindBoxTheme,
+    allowCrossDistrict: typeof quick.allowCrossDistrict === "boolean"
+      ? quick.allowCrossDistrict
+      : requirements.allowCrossDistrict,
+    currentLocation: normalizeLocation(quick.currentLocation) ?? requirements.currentLocation,
+    inputMode,
+    userProfile: normalizeUserProfile(quick.userProfile) ?? requirements.userProfile
   };
 }
 
@@ -53,6 +83,7 @@ export function normalizeRequirements(input: Partial<Requirements>, userInput: U
   const ruleFallback = parseIntentWithRules(userInput);
   const normalized: Requirements = {
     city: typeof input.city === "string" && input.city ? input.city : ruleFallback.city,
+    district: normalizeDistrict(input.district) ?? ruleFallback.district,
     durationHours: toPositiveNumber(input.durationHours) ?? ruleFallback.durationHours,
     budgetMax: toPositiveNumber(input.budgetMax) ?? ruleFallback.budgetMax,
     distanceLevel: typeof input.distanceLevel === "string" && input.distanceLevel ? input.distanceLevel : ruleFallback.distanceLevel,
@@ -61,7 +92,11 @@ export function normalizeRequirements(input: Partial<Requirements>, userInput: U
     constraints: normalizeStringArray(input.constraints, ruleFallback.constraints),
     timeText: typeof input.timeText === "string" && input.timeText ? input.timeText : ruleFallback.timeText,
     rawText: userInput.rawText || "",
+    inputMode: input.inputMode === "natural" || input.inputMode === "selection" ? input.inputMode : ruleFallback.inputMode,
     blindBoxTheme: normalizeTheme(input.blindBoxTheme) ?? ruleFallback.blindBoxTheme,
+    allowCrossDistrict: typeof input.allowCrossDistrict === "boolean" ? input.allowCrossDistrict : ruleFallback.allowCrossDistrict,
+    currentLocation: normalizeLocation(input.currentLocation) ?? ruleFallback.currentLocation,
+    userProfile: normalizeUserProfile((userInput.quickSelections ?? {}).userProfile) ?? ruleFallback.userProfile,
     intentSource: input.intentSource ?? "llm"
   };
 
@@ -69,7 +104,37 @@ export function normalizeRequirements(input: Partial<Requirements>, userInput: U
 }
 
 function extractCity(text: string): string | null {
-  return KNOWN_CITIES.find((city) => text.includes(city)) ?? null;
+  for (const start of getLocationStarts(text)) {
+    const tail = text.slice(start);
+    const commonCity = COMMON_CITY_NAMES.find((city) => tail.startsWith(city));
+    if (commonCity) return commonCity;
+    const suffixed = tail.match(/^([\u4e00-\u9fff]{2,7}?)市(?=[\u4e00-\u9fff]|$)/)?.[1];
+    if (suffixed && !containsPlanningPhrase(suffixed)) return suffixed;
+  }
+  return null;
+}
+
+function extractDistrict(text: string): string | undefined {
+  for (const start of getLocationStarts(text)) {
+    let tail = text.slice(start);
+    const commonCity = COMMON_CITY_NAMES.find((city) => tail.startsWith(city));
+    if (commonCity) tail = tail.slice(commonCity.length).replace(/^市/, "");
+    else tail = tail.replace(/^[\u4e00-\u9fff]{2,7}?市/, "");
+    const match = tail.match(new RegExp(`^(${DISTRICT_SUFFIX_PATTERN.source})`));
+    if (match?.[1] && !containsPlanningPhrase(match[1])) return match[1];
+  }
+  return undefined;
+}
+
+function getLocationStarts(text: string): number[] {
+  const starts = new Set<number>([0]);
+  const pattern = /(?:在|去|到|从|位于)/g;
+  for (const match of text.matchAll(pattern)) starts.add((match.index ?? 0) + match[0].length);
+  return [...starts].sort((a, b) => a - b);
+}
+
+function containsPlanningPhrase(value: string): boolean {
+  return /周末|今天|明天|后天|上午|中午|下午|晚上|想去|想在|找个|地方|附近/.test(value);
 }
 
 function extractDurationHours(text: string): number | null {
@@ -117,7 +182,7 @@ function extractPreferences(text: string): string[] {
     [/美食|吃饭|吃点东西|小吃|餐厅|简餐/, "美食"],
     [/简餐|轻食/, "简餐"],
     [/夜景|夜晚|晚上|灯光|看海夜景/, "夜景"],
-    [/微醺|小酌|酒吧|精酿|鸡尾酒|bistro/i, "微醺"],
+    [/微醺|小酌|喝一杯|酒吧|精酿|鸡尾酒|bistro/i, "微醺"],
     [/文化|看展|展览|书店|博物馆/, "文化"],
     [/户外|公园|散步|citywalk|徒步/, "户外"],
     [/运动|健身/, "运动"],
@@ -179,4 +244,94 @@ function normalizeTheme(value: unknown): string | undefined {
   const theme = value.trim();
   if (!theme || theme === "惊喜盲盒") return undefined;
   return theme;
+}
+
+function normalizeDistrict(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const raw = value.trim();
+  if (!raw) return undefined;
+  const withoutCity = raw.includes("市") ? raw.slice(raw.lastIndexOf("市") + 1) : raw;
+  const match = withoutCity.match(new RegExp(`^(${DISTRICT_SUFFIX_PATTERN.source})$`));
+  return match?.[1];
+}
+
+function normalizeLocation(value: unknown): { lng: number; lat: number } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const location = value as { lng?: unknown; lat?: unknown };
+  const lng = typeof location.lng === "number" ? location.lng : Number(location.lng);
+  const lat = typeof location.lat === "number" ? location.lat : Number(location.lat);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return undefined;
+  return { lng, lat };
+}
+
+function extractProfilePreferences(profile: unknown): string[] {
+  if (!profile || typeof profile !== "object") return [];
+  const data = profile as {
+    likedPoiTypes?: unknown;
+    likedTags?: unknown;
+    likedDistricts?: unknown;
+    favoriteRouteThemes?: unknown;
+    favoritePoiNames?: unknown;
+  };
+  return unique([
+    ...normalizeProfileArray(data.likedPoiTypes).slice(0, 4),
+    ...normalizeProfileArray(data.likedTags).slice(0, 5),
+    ...normalizeProfileArray(data.favoriteRouteThemes).slice(0, 2),
+    ...normalizeProfileArray(data.favoritePoiNames).slice(0, 2).map((name) => `喜欢${name}`)
+  ]);
+}
+
+function extractProfileConstraints(profile: unknown): string[] {
+  if (!profile || typeof profile !== "object") return [];
+  const data = profile as { dislikedPoiTypes?: unknown; rejectedKeywords?: unknown; preferredRoutePace?: unknown };
+  const constraints = [
+    ...normalizeProfileArray(data.dislikedPoiTypes).slice(0, 3).map((type) => `少推荐${type}`),
+    ...normalizeProfileArray(data.rejectedKeywords).slice(0, 3),
+  ];
+  if (data.preferredRoutePace === "relaxed") constraints.push("偏好松弛路线");
+  if (data.preferredRoutePace === "packed") constraints.push("偏好丰富紧凑路线");
+  return unique(constraints);
+}
+
+function normalizeProfileArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return unique(value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()));
+}
+
+function normalizeUserProfile(value: unknown): UserPreferenceProfile | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const data = value as Partial<UserPreferenceProfile>;
+  const pace = data.preferredRoutePace;
+  const budgetRange = Array.isArray(data.budgetRange) &&
+    data.budgetRange.length === 2 &&
+    data.budgetRange.every((item) => typeof item === "number" && Number.isFinite(item))
+      ? data.budgetRange as [number, number]
+      : undefined;
+
+  const profile: UserPreferenceProfile = {
+    likedPoiTypes: normalizeProfileArray(data.likedPoiTypes),
+    likedTags: normalizeProfileArray(data.likedTags),
+    likedDistricts: normalizeProfileArray(data.likedDistricts),
+    favoritePoiNames: normalizeProfileArray(data.favoritePoiNames),
+    favoriteRouteThemes: normalizeProfileArray(data.favoriteRouteThemes),
+    dislikedPoiTypes: normalizeProfileArray(data.dislikedPoiTypes),
+    rejectedKeywords: normalizeProfileArray(data.rejectedKeywords),
+    budgetRange,
+    preferredRoutePace: pace === "relaxed" || pace === "balanced" || pace === "packed" ? pace : undefined,
+    confirmedRouteCount: typeof data.confirmedRouteCount === "number" ? data.confirmedRouteCount : 0,
+    favoritePoiCount: typeof data.favoritePoiCount === "number" ? data.favoritePoiCount : 0,
+    favoriteRouteCount: typeof data.favoriteRouteCount === "number" ? data.favoriteRouteCount : 0,
+  };
+
+  const hasSignal = [
+    profile.likedPoiTypes,
+    profile.likedTags,
+    profile.likedDistricts,
+    profile.favoritePoiNames,
+    profile.favoriteRouteThemes,
+    profile.dislikedPoiTypes,
+    profile.rejectedKeywords,
+  ].some((items) => (items?.length ?? 0) > 0) || Boolean(profile.budgetRange || profile.preferredRoutePace);
+
+  return hasSignal ? profile : undefined;
 }

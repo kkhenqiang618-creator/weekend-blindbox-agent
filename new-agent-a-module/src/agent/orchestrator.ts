@@ -1,4 +1,5 @@
 import { composeBlindBox, selectBlindBoxTheme } from "./blindBox.ts";
+import { personalizeBlindBoxCopy } from "./blindBoxCopywriter.ts";
 import { parseIntent } from "./intentParser.ts";
 import type { LlmReplanConfig, Plan, PlanBResult, Poi, ReplanEvent, Requirements, UserInput } from "./types.ts";
 import { mockPois } from "../mock/mockPois.ts";
@@ -12,6 +13,7 @@ import { reserveOrJoinPlan } from "../tools/reserveOrJoinPlan.ts";
 export interface GeneratePlanOptions {
   executeImmediately?: boolean;
   pois?: Poi[];
+  llm?: LlmReplanConfig;
 }
 
 export interface ReplanOptions {
@@ -24,9 +26,10 @@ export async function generatePlan(
   options: GeneratePlanOptions = {}
 ): Promise<Plan> {
   const pois = options.pois ?? mockPois;
-  const requirements = await parseIntent(userInput);
+  const requirements = await parseIntent(userInput, options.llm);
   const theme = selectBlindBoxTheme(requirements);
   const liveResult = await buildLiveRoute(requirements, theme);
+  assertLiveRouteOrLocalFallback(liveResult, requirements);
   const route = liveResult?.route ?? buildRoute(requirements, pois, theme);
   const [queueResults, availabilityResults] = await Promise.all([
     checkQueue(route),
@@ -38,7 +41,12 @@ export async function generatePlan(
     ...availabilityResults
   ];
   const executionTasks = options.executeImmediately ? await reserveOrJoinPlan(route) : [];
-  const blindBox = composeBlindBox(theme, route, requirements, toolStatus);
+  const blindBox = await personalizeBlindBoxCopy(
+    composeBlindBox(theme, route, requirements, toolStatus),
+    requirements,
+    route,
+    options.llm
+  );
 
   return {
     requirements,
@@ -48,6 +56,17 @@ export async function generatePlan(
     executionTasks,
     planB: null
   };
+}
+
+function isShenzhenCity(city: string): boolean {
+  return city.replace(/市$/, "").trim() === "深圳";
+}
+
+function assertLiveRouteOrLocalFallback(liveResult: unknown, requirements: Requirements): void {
+  if (liveResult || isShenzhenCity(requirements.city)) return;
+  const location = requirements.city.trim();
+  if (!location) throw new Error("请先选择城市，再生成真实路线。");
+  throw new Error(`暂时无法在${location}生成真实路线，请稍后重试或更换区域。`);
 }
 
 export async function executePlan(plan: Plan): Promise<Plan> {
@@ -66,7 +85,7 @@ export async function handleReplan(
   const pois = options.pois ?? mockPois;
 
   if (event.type === "reroll") {
-    return handleReroll(event, currentPlan, pois);
+    return handleReroll(event, currentPlan, pois, options.llm);
   }
 
   let planB = null;
@@ -83,11 +102,16 @@ export async function handleReplan(
     checkAvailability(planB.afterRoute)
   ]);
   const toolStatus = [...queueResults, ...availabilityResults];
-  const blindBox = composeBlindBox(
-    currentPlan.blindBox.theme,
-    planB.afterRoute,
+  const blindBox = await personalizeBlindBoxCopy(
+    composeBlindBox(
+      currentPlan.blindBox.theme,
+      planB.afterRoute,
+      currentPlan.requirements,
+      toolStatus
+    ),
     currentPlan.requirements,
-    toolStatus
+    planB.afterRoute,
+    options.llm
   );
 
   return {
@@ -103,7 +127,8 @@ export async function handleReplan(
 async function handleReroll(
   event: ReplanEvent,
   currentPlan: Plan,
-  pois: Poi[]
+  pois: Poi[],
+  llm?: LlmReplanConfig
 ): Promise<Plan> {
   const requirements = await refineRerollRequirements(event, currentPlan);
   const theme = selectBlindBoxTheme(requirements);
@@ -111,6 +136,7 @@ async function handleReroll(
     excludeIds: currentPlan.route.steps.map((step) => step.poi.id),
     timeoutMs: 8000
   });
+  assertLiveRouteOrLocalFallback(liveResult, requirements);
   const route = liveResult?.route ?? rerollRoute(requirements, currentPlan.route, pois, theme);
   const [queueResults, availabilityResults] = await Promise.all([
     checkQueue(route),
@@ -121,7 +147,12 @@ async function handleReroll(
     ...queueResults,
     ...availabilityResults
   ];
-  const blindBox = composeBlindBox(theme, route, requirements, toolStatus);
+  const blindBox = await personalizeBlindBoxCopy(
+    composeBlindBox(theme, route, requirements, toolStatus),
+    requirements,
+    route,
+    llm
+  );
   const planB = buildRerollResult(event, currentPlan, route, requirements);
 
   return {
@@ -143,8 +174,8 @@ function buildLiveRouteToolStatus(
     toolName: "amapLiveRouteSearch",
     status: liveResult ? "success" as const : "failed" as const,
     message: liveResult
-      ? `已按${selectedTheme || "盲盒风格"}实时检索 ${liveResult.candidates.length} 个深圳候选点。`
-      : "实时地点检索超时或候选不足，已启用本地 Mock POI 保底。",
+      ? `已按${selectedTheme || "本次风格"}找到 ${liveResult.candidates.length} 个候选点。`
+      : "实时地点检索超时或候选不足，已先用本地地点库生成可测试路线。",
     result: liveResult
       ? {
           keywords: liveResult.keywords,
@@ -169,13 +200,15 @@ async function refineRerollRequirements(event: ReplanEvent, currentPlan: Plan): 
       rawText: rerollText,
       quickSelections: {
         city: currentPlan.requirements.city,
+        district: currentPlan.requirements.district,
         durationHours: currentPlan.requirements.durationHours,
         budget: currentPlan.requirements.budgetMax,
         peopleType: currentPlan.requirements.peopleType,
         preferences: currentPlan.requirements.preferences,
         constraints: currentPlan.requirements.constraints,
         distanceLevel: currentPlan.requirements.distanceLevel,
-        blindBoxTheme: currentPlan.requirements.blindBoxTheme
+        blindBoxTheme: currentPlan.requirements.blindBoxTheme,
+        inputMode: currentPlan.requirements.inputMode
       }
     });
   } catch {
@@ -197,14 +230,14 @@ function buildRerollResult(
       from: beforeStep?.poi.name,
       to: step.poi.name,
       reason: beforeNames.has(step.poi.name)
-        ? "这一站与新路线仍然匹配，Agent 在空间顺序中保留。"
-        : "Agent 已避开当前路线核心点，重新匹配一条新的盲盒路线。"
+        ? "这一站与新路线仍然匹配，所以保留在新的顺序里。"
+        : "已避开上一条路线的核心点，重新匹配一条新路线。"
     };
   });
 
   return {
     event,
-    impact: "你选择重新更换整条路线，Agent 已重新理解需求并重开周末盲盒。",
+    impact: "你选择重新更换整条路线，系统已按当前需求重新生成。",
     beforeRoute: currentPlan.route,
     afterRoute,
     changes,

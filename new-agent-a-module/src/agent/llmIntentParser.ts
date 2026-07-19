@@ -1,4 +1,4 @@
-import type { Requirements, UserInput } from "./types.ts";
+import type { LlmReplanConfig, Requirements, UserInput } from "./types.ts";
 import { normalizeRequirements } from "./intentRules.ts";
 
 interface ChatCompletionResponse {
@@ -9,15 +9,15 @@ interface ChatCompletionResponse {
   }>;
 }
 
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = "deepseek-v4-pro";
 const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
 
-export async function parseIntentWithLLM(userInput: UserInput): Promise<Requirements | null> {
-  const apiKey = getLlmApiKey();
+export async function parseIntentWithLLM(userInput: UserInput, config: LlmReplanConfig = {}): Promise<Requirements | null> {
+  const apiKey = config.apiKey || getLlmApiKey();
   if (!apiKey) return null;
 
-  const baseUrl = getLlmBaseUrl();
-  const model = getLlmModel();
+  const baseUrl = config.baseUrl || getLlmBaseUrl();
+  const model = getIntentModel(config, baseUrl);
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -26,28 +26,56 @@ export async function parseIntentWithLLM(userInput: UserInput): Promise<Requirem
     },
     body: JSON.stringify({
       model,
-      temperature: 0.1,
+      temperature: 0,
       response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
           content: [
-            "你是本地生活周末出游 Agent 的意图解析器。",
-            "请把用户的一句话目标解析为严格 JSON，不要输出解释。",
-            "字段必须包含：city, durationHours, budgetMax, distanceLevel, peopleType, preferences, constraints, timeText。",
-            "如果 quickSelections.blindBoxTheme 存在，请不要改写它；这个字段代表用户明确选择的盲盒路线风格。",
-            "peopleType 只能是：单人、情侣、朋友、亲子。",
-            "preferences 和 constraints 必须是字符串数组。",
-            "请优先根据用户原话做语义判断，不要机械套用默认值。",
-            "城市：用户没说时默认深圳。",
-            "时长：用户没说时，根据“现在、半天、下午、晚上、周末”等语境推断；仍无法判断时用4小时。",
-            "预算：用户没说时，根据语气和活动类型推断合理预算；仍无法判断时用300。",
-            "同行人：请根据语义判断。带娃/孩子/亲子通常是亲子；对象/情侣/约会通常是情侣；朋友/同学/同事/团建/多人通常是朋友；如果用户以第一人称表达自己想出去，如“我现在有点无聊”“我想找个地方”，且没有提到同行人，通常是单人。若没有明确关键词，也请结合整句话选择最合理的 peopleType，不要固定默认朋友。",
-            "preferences：从语义中抽取用户真正想要的体验，如拍照、咖啡、美食、文化、户外、运动、解压、小众、性价比、休闲等。",
-            "如果用户提到晚上、夜景、微醺、小酌、酒吧、精酿、bistro、简餐，请把夜景、微醺、简餐中相关词放入 preferences。",
-            "constraints：抽取限制条件，如不想排队、少走路、室内优先、预算友好、雨天可去等。",
-            "timeText：保留用户提到的时间表达，如现在、周六下午、明天下午、周末晚上；如果没说，结合语境给出自然时间，如现在或周末下午。",
-            "distanceLevel：如果用户没明确说距离，返回空字符串。"
+            "你是周末出游的意图解析器。只输出 JSON，不输出解释。",
+            "解析用户输入为结构化需求。输出格式：",
+            "",
+            "{",
+            '  "city": "城市名，从用户输入中提取",',
+            '  "district": "行政区（如XX区/XX县），没说则为空字符串",',
+            '  "durationHours": 数字（默认4）,',
+            '  "budgetMax": 数字（默认300）,',
+            '  "distanceLevel": "说了才填，没说则为空字符串",',
+            '  "peopleType": "单人/情侣/朋友/亲子",',
+            '  "preferences": ["体验标签数组"],',
+            '  "constraints": ["限制条件数组"],',
+            '  "timeText": "用户的时间表达",',
+            '  "allowCrossDistrict": 布尔,',
+            '  "currentLocation": 对象或null',
+            "}",
+            "",
+            "规则（按优先级，冲突时高优先级覆盖低）：",
+            "",
+            "P1-原话优先：用户明确说的信息直接采用，不要用默认值覆盖",
+            "P2-同行人推断：带娃/孩子/亲子→亲子，对象/约会/情侣→情侣，朋友/同学/团建→朋友，第一人称自己想去且无同行人→单人",
+            "P3-城市：从用户输入中提取城市名，没有明确的则留空",
+            "P4-时长推断：半天→4h，晚上→2-3h，周末全天→6-8h，实在不行用4",
+            "P5-预算推断：省钱/性价比→150，小酌/bistro→200-300，高档/约会→300-500，实在不行用300",
+            "P6-距离：用户没明确说就不填",
+            "P7-区划：只有明确提到行政区名（如XX区）才填，默认空",
+            "P8-偏好抽取：从语义中抽体验词（拍照/咖啡/美食/文化/户外/运动/解压/小众/夜景/微醺/甜品/简餐等）",
+            "P9-约束抽取：不想排队/少走路/室内优先/预算友好/宠物友好等",
+            "P10-quickSelections：natural 模式只作上下文兜底，不能覆盖原话中的明确城市或区县；selection 模式是用户明确选择，应优先采用",
+            "P11-用户画像：如传入userProfile，likedPoiTypes/likedTags混入preferences(≤4个)，dislikedPoiTypes/rejectedKeywords混入constraints(≤3个)，优先级低于用户原话",
+            "",
+            "示例：",
+            "",
+            '输入1："周末下午想带娃在南山找个可以拍照玩的地方"',
+            '输出：{"city":"","district":"南山区","durationHours":4,"budgetMax":300,"distanceLevel":"","peopleType":"亲子","preferences":["拍照","亲子"],"constraints":[],"timeText":"周末下午","allowCrossDistrict":false,"currentLocation":null}',
+            "",
+            '输入2："最近压力好大，一个人晚上找个安静地方喝一杯，预算300以内"',
+            '输出：{"city":"","district":"","durationHours":3,"budgetMax":300,"distanceLevel":"","peopleType":"单人","preferences":["解压","微醺","夜景"],"constraints":["预算友好"],"timeText":"晚上","allowCrossDistrict":false,"currentLocation":null}',
+            "",
+            '输入3："和朋友在上海徐汇区吃个饭，不怕远"',
+            '输出：{"city":"上海","district":"徐汇区","durationHours":4,"budgetMax":300,"distanceLevel":"","peopleType":"朋友","preferences":["美食"],"constraints":[],"timeText":"周末下午","allowCrossDistrict":true,"currentLocation":null}',
+            "",
+            '输入4："下午想去成都太古里附近走走，喝杯咖啡拍拍照"',
+            '输出：{"city":"成都","district":"","durationHours":3,"budgetMax":200,"distanceLevel":"","peopleType":"单人","preferences":["咖啡","拍照","户外"],"constraints":[],"timeText":"下午","allowCrossDistrict":false,"currentLocation":null}'
           ].join("\n")
         },
         {
@@ -93,7 +121,13 @@ function getLlmBaseUrl(): string {
   return process.env.OPENAI_BASE_URL || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL;
 }
 
-function getLlmModel(): string {
+function getIntentModel(config: LlmReplanConfig, baseUrl: string): string {
+  const intentModel = config.intentModel
+    || process.env.OPENAI_INTENT_MODEL
+    || process.env.DEEPSEEK_INTENT_MODEL;
+  if (intentModel) return intentModel;
+  if (config.model) return config.model;
+  if (/api\.deepseek\.com/i.test(baseUrl)) return DEFAULT_MODEL;
   return process.env.OPENAI_MODEL || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL;
 }
 

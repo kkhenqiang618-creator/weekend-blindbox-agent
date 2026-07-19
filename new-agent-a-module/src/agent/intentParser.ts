@@ -1,10 +1,10 @@
-import type { Requirements, UserInput } from "./types.ts";
+import type { LlmReplanConfig, Requirements, UserInput } from "./types.ts";
 import { parseIntentWithLLM } from "./llmIntentParser.ts";
 import { parseIntentWithRules } from "./intentRules.ts";
 
-export async function parseIntent(userInput: UserInput): Promise<Requirements> {
+export async function parseIntent(userInput: UserInput, config: LlmReplanConfig = {}): Promise<Requirements> {
   try {
-    const llmRequirements = await parseIntentWithLLM(userInput);
+    const llmRequirements = await parseIntentWithLLM(userInput, config);
     if (llmRequirements) return llmRequirements;
   } catch (error) {
     return {
